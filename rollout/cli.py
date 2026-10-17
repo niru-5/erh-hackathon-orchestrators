@@ -78,12 +78,17 @@ def parse_args(argv=None) -> argparse.Namespace:
     transport.add_argument("--timeout", type=float, default=30.0, help="seconds per request (default 30)")
     model = run.add_argument_group("in-process model (local:flux / local:hold)")
     model.add_argument(
-        "--weights", help="flux: Hub repo or local package (default black-forest-labs/flux-3-action-so101)"
+        "--weights",
+        help="flux: Hub repo or local package (default black-forest-labs/flux-3-action-so101); "
+        "lerobot: the policy repo, e.g. rtrtwrw/act_chess_c3_to_d5 (required)",
     )
-    model.add_argument("--revision", help="flux: Hub revision to pin")
+    model.add_argument("--revision", help="flux/lerobot: Hub revision to pin")
     model.add_argument("--adapter", help="flux: LeRobot PEFT LoRA to merge, e.g. Gawtam/flux3-chess-lora")
     model.add_argument("--adapter-revision", help="flux: adapter revision to pin")
-    model.add_argument("--device", default="cuda")
+    model.add_argument("--device", default="auto", help="cuda, cpu or auto (default: cuda if available)")
+    model.add_argument(
+        "--n-action-steps", type=int, help="lerobot: actions executed per plan (default: the checkpoint's config)"
+    )
     model.add_argument("--compile", action="store_true", help="flux: torch.compile the DiT (slow first request)")
     model.add_argument("--hold-delay", type=float, default=0.0, help="hold: simulated inference seconds")
     run.add_argument("--log-dir", type=Path, default=Path("rollout_logs"))
@@ -94,9 +99,16 @@ def parse_args(argv=None) -> argparse.Namespace:
 def _backend(args):
     if args.policy.startswith(("http://", "https://")):
         return make_backend(args.policy, jpeg_quality=args.jpeg_quality, timeout_s=args.timeout)
+    device = args.device if args.device != "auto" else ("cuda" if _cuda() else "cpu")
+    if args.policy == "local:lerobot":
+        if not args.weights:
+            raise SystemExit("local:lerobot needs --weights <policy repo>, e.g. rtrtwrw/act_chess_c3_to_d5")
+        return make_backend(
+            args.policy, weights=args.weights, revision=args.revision, device=device, n_action_steps=args.n_action_steps
+        )
     if args.policy == "local:flux":
         kwargs = {
-            "device": args.device,
+            "device": device,
             "compile_dit": args.compile,
             "revision": args.revision,
             "adapter": args.adapter,
@@ -108,6 +120,12 @@ def _backend(args):
     if args.policy == "local:hold":
         return make_backend(args.policy, delay_s=args.hold_delay)
     return make_backend(args.policy)
+
+
+def _cuda() -> bool:
+    import torch
+
+    return torch.cuda.is_available()
 
 
 def main(argv=None) -> int:
