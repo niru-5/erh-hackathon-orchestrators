@@ -18,6 +18,7 @@ account has accepted the license on https://huggingface.co/black-forest-labs/flu
 
 import argparse
 import json
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -179,6 +180,7 @@ def status(api: HfApi, args, ledger: Ledger) -> None:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(line_buffering=True)  # progress shows up live in logs, not only at exit
     parser = argparse.ArgumentParser(
         prog="python -m rollout.server.space", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
