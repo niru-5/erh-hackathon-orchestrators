@@ -7,6 +7,9 @@ in the **LeRobotDataset v3.0** format (`meta/info.json` → `"codebase_version":
 `scripts/record_so101.sh` wraps `lerobot-record` with this rig's ports, calibration and cameras,
 so a recording only needs a **task prompt** and an **episode count**.
 
+The recorded training dataset is `niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741`
+(31 episodes, 13,229 frames). Its metadata is in [Recorded datasets](#recorded-datasets).
+
 ## Quick start
 
 ```bash
@@ -270,6 +273,107 @@ print(ds.meta.tasks)
 "
 .venv/bin/lerobot-dataset-viz --repo-id <repo-id> --episode-index 0
 ```
+
+## Recorded datasets
+
+### Main dataset: `niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741`
+
+The dataset recorded for training. All metadata below was read from the local copy
+(`meta/info.json`, `meta/tasks.parquet`, `meta/episodes/`, `meta/stats.json`, `data/`) and from the
+timing report, on 2026-10-17.
+
+| Field | Value |
+|---|---|
+| Hub | [huggingface.co/datasets/niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741](https://huggingface.co/datasets/niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741), **public**, license `apache-2.0`, tags `LeRobot`, `task_categories:robotics`, git tag `v3.0`, commit `9b6b387` (pushed 15:28 CEST). The Hub copy matches the local one (31 episodes, 13,229 frames) |
+| Local path | `~/.cache/huggingface/lerobot/niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741` |
+| Format | LeRobotDataset `v3.0`, recorded with lerobot `0.6.0` (`scripts/record_so101.sh`) |
+| Robot | `so_follower` (SO-101 follower, teleoperated with the SO-101 leader, calibration id `so101`) |
+| Task (`task_index` 0, the only task) | `Move the figure from c3 at 6cm to D5 at 10 cm` (verbatim, including the mixed case) |
+| Episodes / frames | **31** episodes, **13,229** frames, split `train` = `0:31` |
+| fps | 30 (data and all videos) |
+| Total duration | 441.0 s (7 min 21 s) |
+| Episode length | mean 426.7 frames (14.2 s), median 406 (13.5 s), min 305 (10.2 s, ep 19), max 598 (19.9 s, ep 1), std 79.7 |
+| Cameras | `scene`, `wrist`, `extra`: all three recorded, 640×480, RGB |
+| Video encoding | AV1, `yuv420p`, CRF 30, GOP (`g`) 2, preset 12, `pyav` backend, no audio |
+| Size | 444 MB: videos 443 MB (scene 160, wrist 154, extra 151), frame data 0.6 MB, meta 0.4 MB |
+| Files | 5 data parquet files, 5 episode-meta files, 5 MP4s per camera (one per recording session), `chunks_size` 1000 |
+
+**Recording sessions.** The dataset was created at 14:57:41 and extended 4 times with `--resume`.
+Each session wrote its own data/video file:
+
+| Session | Episodes | Frames (global `index`) | File | Saved at (CEST) |
+|---|---|---|---|---|
+| 1 | 0–2 | 0–1594 (1,595) | `file-000` | 14:59:40 |
+| 2 | 3–4 | 1595–2682 (1,088) | `file-001` | 15:08:51 |
+| 3 | 5 | 2683–3130 (448) | `file-002` | 15:11:50 |
+| 4 | 6–20 | 3131–8744 (5,614) | `file-003` | 15:18:22 |
+| 5 | 21–30 | 8745–13228 (4,484) | `file-004` | 15:27:27 |
+
+**Per-episode lengths** (frames / seconds):
+
+| ep | frames | s | ep | frames | s | ep | frames | s | ep | frames | s |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 464 | 15.5 | 8 | 387 | 12.9 | 16 | 370 | 12.3 | 24 | 454 | 15.1 |
+| 1 | 598 | 19.9 | 9 | 368 | 12.3 | 17 | 464 | 15.5 | 25 | 516 | 17.2 |
+| 2 | 533 | 17.8 | 10 | 334 | 11.1 | 18 | 338 | 11.3 | 26 | 406 | 13.5 |
+| 3 | 557 | 18.6 | 11 | 378 | 12.6 | 19 | 305 | 10.2 | 27 | 521 | 17.4 |
+| 4 | 531 | 17.7 | 12 | 308 | 10.3 | 20 | 352 | 11.7 | 28 | 371 | 12.4 |
+| 5 | 448 | 14.9 | 13 | 398 | 13.3 | 21 | 534 | 17.8 | 29 | 393 | 13.1 |
+| 6 | 482 | 16.1 | 14 | 326 | 10.9 | 22 | 451 | 15.0 | 30 | 388 | 12.9 |
+| 7 | 454 | 15.1 | 15 | 350 | 11.7 | 23 | 450 | 15.0 | | | |
+
+**Recording rate (timing report).** `~/.cache/huggingface/lerobot/timing/niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741.json`
+covers only session 5 (episodes 21–30), because each `--resume` session overwrites the report for the same repo id.
+For those 10 episodes: real rate 29.88–29.91 Hz, **0 late frames** after the first, p99 frame time
+33.7–33.9 ms, worst 49.7 ms (ep 30), first frame 38–72 ms (encoder start), no discarded attempts. All 10 are **OK**.
+Episodes 0–20 have no saved report. They were recorded with the same settings, but their real rate
+can't be checked after the fact.
+
+**Joint statistics** (from `meta/stats.json`; degrees for the 5 body joints, 0–100 % for the gripper):
+
+| Joint | `observation.state` min / max | mean ± std | `action` min / max | mean ± std |
+|---|---|---|---|---|
+| `shoulder_pan` | −17.1 / 7.8 | −5.2 ± 4.5 | −17.7 / 8.2 | −5.0 ± 4.5 |
+| `shoulder_lift` | −97.1 / 41.8 | −24.8 ± 48.0 | −103.6 / 41.3 | −26.5 ± 49.3 |
+| `elbow_flex` | −30.4 / 96.7 | 38.9 ± 37.6 | −33.3 / 96.8 | 37.9 ± 38.5 |
+| `wrist_flex` | 45.5 / 100.0 | 77.5 ± 10.7 | 44.4 / 100.8 | 77.5 ± 10.8 |
+| `wrist_roll` | −106.5 / 67.3 | −74.1 ± 23.2 | −107.2 / 67.4 | −74.0 ± 23.2 |
+| `gripper` | 0.8 / 37.1 | 8.5 ± 7.7 | 0.2 / 37.8 | 7.6 ± 8.5 |
+
+- `wrist_roll` stays between −85 and −65 for 98 % of frames (q01 −85.3, q99 −65.5). The max of +67 is a
+  rare outlier; check for it before training if normalization uses min/max.
+- Mean |`action` − `observation.state`| per joint: pan 0.5°, lift 3.4°, elbow 2.9°, wrist flex 1.0°,
+  wrist roll 0.5°, gripper 1.7 %. The follower tracks the leader closely; the larger lift/elbow gap
+  is the follower lagging under load.
+
+Image statistics (RGB, 0–1, over 253,996,800 sampled pixels per camera): mean `scene`
+(0.553, 0.482, 0.414), `wrist` (0.504, 0.419, 0.425), `extra` (0.404, 0.383, 0.317); std about 0.26–0.29 per channel.
+
+Load it:
+
+```bash
+.venv/bin/python -c "
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+ds = LeRobotDataset('niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741')
+print(ds.num_episodes, ds.num_frames)   # 31 13229
+"
+```
+
+### Other recordings (2026-10-17)
+
+Test and earlier runs, not meant for training. All are 30 fps, `so_follower`, LeRobotDataset `v3.0`, under
+`~/.cache/huggingface/lerobot/` unless noted.
+
+| Repo id | Task | Episodes / frames | Cameras | Where | Notes |
+|---|---|---|---|---|---|
+| `niru-5/test_2_20261017_120222` | erh_hacakthon | 2 / 857 | `right_side`, `ff`, `left_side` | Hub only | leLab recording, used to check the format |
+| `niru-5/test_1_20261017_135757` | Move the horse piece forward | 2 / 928 | `right_side`, `ff`, `left_side` | local + Hub | Old camera names |
+| `chess_data/` (repo root, gitignored) | Move the horse piece forward | 2 / 1690 | `right_side`, `ff`, `left_side` | local | leLab-era copy with old camera names |
+| `niru-5/chess_piece_forward_20261017_140002` | Move the horse piece forward | 2 / 784 | `scene`, `wrist`, `extra` | local | |
+| `niru-5/so101_20261017_141741` | Move the chess piece forward | 1 / 596 | `scene`, `wrist`, `extra` | local | |
+| `niru-5/so101_20261017_142009`, `niru-5/so101_20261017_142311` | | 0 / 0 | | local | Empty (only `meta/info.json`) |
+| `niru-5/so101_20261017_142326` | Move the chess piece forward | 1 / 431 | `scene`, `wrist`, `extra` | local | Not finalized: no `meta/episodes/`, leftover `tmp*` dirs |
+| `niru-5/chess_dataset_20261017_142713` | Move the chess piece forward | 2 / 13,843 | `scene`, `wrist`, `extra` | local (441 MB) | Long episodes (191 s, 272 s); 29.9 Hz with 1 late frame each (worst 134 ms) |
 
 ## Pre-recording checks
 
