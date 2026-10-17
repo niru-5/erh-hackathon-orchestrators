@@ -28,7 +28,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     run.add_argument(
         "--policy",
         required=True,
-        help="server URL (https://<space>.hf.space, http://host:7860) or local:flux / local:hold",
+        help="server URL (https://<space>.hf.space, http://host:7860) or local:flux / local:act / local:hold",
     )
     run.add_argument("--task", help="instruction for the model (default with --robot dataset: the dataset's task)")
     run.add_argument("--episodes", type=int, default=1, help="so101: number of episodes (default 1)")
@@ -59,13 +59,17 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="send camera frames as captured instead of resized to the model's input size",
     )
     transport.add_argument("--timeout", type=float, default=30.0, help="seconds per request (default 30)")
-    model = run.add_argument_group("in-process model (local:flux / local:hold)")
+    model = run.add_argument_group("in-process model (local:flux / local:act / local:hold)")
     model.add_argument(
-        "--weights", help="flux: Hub repo or local package (default black-forest-labs/flux-3-action-so101)"
+        "--weights",
+        help="flux: Hub repo or local package (default black-forest-labs/flux-3-action-so101); act: required",
     )
-    model.add_argument("--revision", help="flux: Hub revision to pin")
+    model.add_argument("--revision", help="flux / act: Hub revision to pin")
     model.add_argument("--device", default="cuda")
     model.add_argument("--compile", action="store_true", help="flux: torch.compile the DiT (slow first request)")
+    model.add_argument(
+        "--n-action-steps", type=int, help="act: actions executed per plan (default: the checkpoint's)"
+    )
     model.add_argument("--hold-delay", type=float, default=0.0, help="hold: simulated inference seconds")
     run.add_argument("--log-dir", type=Path, default=Path("rollout_logs"))
     run.add_argument("-v", "--verbose", action="store_true")
@@ -80,6 +84,16 @@ def _backend(args):
         if args.weights:
             kwargs["weights"] = args.weights
         return make_backend(args.policy, **kwargs)
+    if args.policy == "local:act":
+        if not args.weights:
+            raise SystemExit("--weights is required with --policy local:act")
+        return make_backend(
+            args.policy,
+            weights=args.weights,
+            revision=args.revision,
+            device=args.device,
+            n_action_steps=args.n_action_steps,
+        )
     if args.policy == "local:hold":
         return make_backend(args.policy, delay_s=args.hold_delay)
     return make_backend(args.policy)

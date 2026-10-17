@@ -11,15 +11,20 @@ class Model(Protocol):
     def predict(self, window: Window) -> Plan: ...
 
 
-MODELS = ("flux", "hold")
+MODELS = ("flux", "act", "hold")
 
 
 def make_model(name: str, **kwargs) -> Model:
-    """``flux`` (FLUX 3 Action SO-101, needs a GPU) or ``hold`` (mock that keeps the arm still)."""
+    """``flux`` (FLUX 3 Action SO-101, needs a GPU), ``act`` (a lerobot ACT checkpoint, CPU is fine) or ``hold``
+    (mock that keeps the arm still)."""
     if name == "flux":
         from .flux import FluxModel  # imports torch and flux_action only when needed
 
         return FluxModel(**kwargs)
+    if name == "act":
+        from .act import ACTModel
+
+        return ACTModel(**kwargs)
     if name == "hold":
         from .hold import HoldModel
 
