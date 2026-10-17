@@ -12,7 +12,7 @@ from rollout.backends.local import LocalBackend
 from rollout.backends.remote import RemoteBackend
 from rollout.contract import Observation, Plan, PolicySpec
 from rollout.history import History
-from rollout.loop import JointLimits, RunLog, run_episode
+from rollout.loop import JointLimits, RunLog, StallGuard, run_episode
 from rollout.models.hold import HoldModel
 from rollout.server.app import create_app
 
@@ -171,3 +171,43 @@ def test_teacher_forcing_anchors_each_plan_on_the_recorded_command():
     assert sent[31] == 32 and sent[32] == 132 and sent[64] == 100 + 63 + 1
     with pytest.raises(ValueError):
         run_episode(FakeRobot(5), backend, spec, History(spec), task="t", episode=0, max_ticks=5, teacher_forcing=True)
+
+
+class BlockedRobot(FakeRobot):
+    """Follows goals, except shoulder_lift can't pass 5 degrees (a table in the way)."""
+
+    realtime = False
+
+    def act(self, action):
+        self.sent.append(action)
+        self.state = action.astype(np.float32).copy()
+        self.state[1] = min(self.state[1], 5.0)
+        return action
+
+
+class LiftModel(RampModel):
+    def predict(self, window):
+        steps = np.arange(1, 33, dtype=np.float32)[:, None] * np.eye(6, dtype=np.float32)[1]
+        return Plan(window.commands[-1] + steps, {}, "lift")
+
+
+def test_stall_guard_stops_a_blocked_arm_and_holds_position():
+    robot = BlockedRobot(ticks=200)
+    backend = LocalBackend(LiftModel())
+    spec = backend.spec()
+    robot.start_episode(0)
+    stats = run_episode(
+        robot, backend, spec, History(spec), task="t", episode=0, max_ticks=200, stall_guard=StallGuard()
+    )
+    assert stats.stopped_by.startswith("stall: shoulder_lift.pos")
+    # blocked at 5 from the goal of tick 4; gap > 6 from tick 11, 10 still ticks later -> stop at tick ~21
+    assert 15 <= stats.ticks <= 25
+    np.testing.assert_allclose(robot.sent[-1][1], 5.0)  # last goal: hold where the arm is
+
+
+def test_stall_guard_ignores_lag_while_moving():
+    guard = StallGuard()
+    goal = np.zeros(6, np.float32)
+    for _ in range(50):  # the arm trails the goal by 12 degrees but keeps moving 3 degrees per tick
+        goal = goal + np.array([0, 3, 0, 0, 0, 0], np.float32)
+        assert guard.update(goal - np.array([0, 12, 0, 0, 0, 0], np.float32), goal) is None

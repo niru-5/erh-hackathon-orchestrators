@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .backends import make_backend
 from .history import History
-from .loop import JointLimits, RunLog, run_episode
+from .loop import JointLimits, RunLog, StallGuard, run_episode
 
 MAIN_DATASET = "niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741"
 logger = logging.getLogger("rollout")
@@ -50,13 +50,24 @@ def parse_args(argv=None) -> argparse.Namespace:
     safety.add_argument(
         "--max-relative-target",
         type=float,
-        default=10.0,
-        help="max goal distance from the present position per tick, degrees (default 10; 0 = off)",
+        default=5.0,
+        help="max goal distance from the present position per tick, degrees (default 5; 0 = off)",
     )
-    safety.add_argument("--limits-from", help="clamp joints to a dataset's recorded range (repo id or local dir)")
     safety.add_argument(
-        "--limit-margin", type=float, default=10.0, help="margin around --limits-from range (default 10)"
+        "--limits-from",
+        default=MAIN_DATASET,
+        help=f"so101: clamp joints to a dataset's recorded range (default {MAIN_DATASET}; 'none' = off)",
     )
+    safety.add_argument(
+        "--limit-margin", type=float, default=0.0, help="degrees allowed beyond the --limits-from range (default 0)"
+    )
+    safety.add_argument(
+        "--stall-guard",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="so101: stop the episode when a joint is blocked (far from its goal and not moving) (default on)",
+    )
+    safety.add_argument("--stall-gap", type=float, default=6.0, help="stall guard: goal gap in degrees (default 6)")
     transport = run.add_argument_group("transport (remote policy)")
     transport.add_argument("--jpeg-quality", type=int, default=90)
     transport.add_argument(
@@ -141,7 +152,8 @@ def main(argv=None) -> int:
 
             args.task = str(LeRobotDatasetMetadata(args.dataset, root=args.dataset_root).tasks.index[0])
 
-    limits = JointLimits.from_dataset(args.limits_from, args.limit_margin) if args.limits_from else None
+    use_limits = args.robot == "so101" and args.limits_from and args.limits_from.lower() != "none"
+    limits = JointLimits.from_dataset(args.limits_from, args.limit_margin) if use_limits else None
     if limits:
         logger.info("joint limits: %s", limits.describe())
     log = RunLog(args.log_dir / datetime.now().strftime("%Y%m%d_%H%M%S"))
@@ -176,6 +188,11 @@ def main(argv=None) -> int:
                 episode=episode,
                 max_ticks=max_ticks,
                 teacher_forcing=args.robot == "dataset" and args.teacher_forcing,
+                stall_guard=(
+                    StallGuard(gap_deg=args.stall_gap)
+                    if robot.realtime and args.stall_guard and not args.dry_run  # dry run: goals never move the arm
+                    else None
+                ),
                 limits=limits,
                 log=log,
                 events=events,

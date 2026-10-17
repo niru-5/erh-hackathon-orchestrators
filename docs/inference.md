@@ -186,9 +186,15 @@ so the split between network and GPU is visible. Rough guide: with a 500 ms roun
 
 The model card: *nothing in the model bounds joint velocity, force or workspace*. The robot side:
 
-- `--max-relative-target` (default 10°/tick): lerobot clips each goal to within this of the present position.
-- `--limits-from <dataset>`: clamps every joint to the range seen in a dataset (`meta/stats.json`
-  min/max ± `--limit-margin`, default 10°). Recommended: our main dataset.
+- `--max-relative-target` (default 5°/tick): lerobot clips each goal to within this of the present position.
+- `--limits-from <dataset>` (default: our main dataset; `none` disables it): clamps every joint to the range
+  the demonstrations covered (`meta/stats.json` min/max ± `--limit-margin`, default 0°). With a 10° margin,
+  the arm was allowed beyond the demos (pan −28°, wrist_flex 110°) and went into the table.
+- **Stall guard** (default on, `--no-stall-guard` disables it): ends the episode and holds the current position when a
+  non-gripper joint is more than `--stall-gap` (6°) from its goal **and** has stopped moving (< 0.5°/tick) for
+  10 ticks (0.33 s). Normal fast moves trail the goal by up to ~15° but keep moving; a joint pressed
+  against something doesn't. Replayed on the table-hit log it stops at 5.1 s, 7 s before the servos faulted.
+  It's off in `--dry-run`, where the arm never follows the goals.
 - `--dry-run`: run everything (cameras, model, timing) but never send goals. The arm holds still.
 - Esc stops; → ends the episode early. On exit (also Ctrl+C or an error) lerobot disables torque
   (`disable_torque_on_disconnect`), so **the arm goes limp and drops**: keep a hand under it, and keep a hand near
@@ -222,8 +228,7 @@ All commands run from the repo root with the lerobot venv (`.venv`).
 .venv/bin/python -m rollout run --robot so101 --policy https://niru-5-flux3-so101-rollout.hf.space \
   --task "Move the figure from c3 at 6cm to D5 at 10 cm" --dry-run
 .venv/bin/python -m rollout run --robot so101 --policy https://niru-5-flux3-so101-rollout.hf.space \
-  --task "Move the figure from c3 at 6cm to D5 at 10 cm" \
-  --limits-from niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741 --episodes 3
+  --task "Move the figure from c3 at 6cm to D5 at 10 cm" --episode-time 20  # safety defaults on
 ```
 
 Each run writes `rollout_logs/<timestamp>/` (git-ignored): `ticks.jsonl` (per tick: time, state,
@@ -250,11 +255,12 @@ Space (`a100-large`) → FLUX 3 Action → 15 plans of 32 actions, no errors.
 | On the arm this would mean | 1.07 s of motion, then about 1.5 s holding still (≈ 40 % duty) |
 | Space start (paused → serving) | about 4.5 min (image start, weight download, two warm-up predictions) |
 
-**The predicted actions are far off, because of a joint-convention mismatch, not (only) model quality.**
-Mean error vs. the recorded actions: shoulder_lift 389°, elbow_flex 196°, wrist_flex 84°, wrist_roll 71°,
-shoulder_pan 54°, gripper 8.5 %. Even the first plan is off by 63° (lift) and 67° (roll). The model's own
-normalization quantiles (`policy_preprocessor_step_3_*.safetensors`, `dataset_statistics.json`) show the
-state range it was trained on:
+That run was **free-running**: the history recorded the model's own commands while the state came from
+the recording. A recording doesn't follow the model, so from the second plan on the history is
+inconsistent and the commands drift (shoulder_lift error 389°, commands up to 577°). Most of that error is
+this evaluation artifact, not the model; see teacher forcing below. The first plan (fresh history) was
+off by 63° (lift) and 67° (roll). The base model's normalization quantiles
+(`policy_preprocessor_step_3_*.safetensors`, `dataset_statistics.json`) show a state range far from ours:
 
 | Joint | Model training state, q01 … q99 | Our dataset state, q01 … q99 |
 |---|---|---|
@@ -268,13 +274,52 @@ state range it was trained on:
 Our calibration (lerobot 0.6.0, `use_degrees=true`) puts 0° at the middle of each joint's calibrated range.
 The SO-101 episodes in `lerobot/community_dataset_v3` that the model learned from use other zeros:
 shoulder_lift looks like ours + ~180°, and elbow_flex and the wrist joints are shifted too, possibly with a
-flipped sign. Fed our raw state, the model sees an arm pose it never saw, and its delta predictions explode.
+flipped sign. Fed our raw state, the zero-shot base model sees arm poses it rarely saw. A fine-tune on our
+data (next section) learns our convention directly, so no mapping is needed for it.
 
-**Don't run this model on the arm until that's mapped.** It would command joints far outside our range;
-`--limits-from` would clamp them, but the motion would still be meaningless. Next step: estimate a per-joint
-sign and offset between the two conventions (e.g. compare the rest pose at the start of community episodes with ours,
-and confirm with a known pose on the arm). Then apply it in the client, before `History` and after the plan, so the
-model sees its training convention and the arm gets ours.
+## Fine-tuned LoRA: `Gawtam/flux3-chess-lora` (2026-10-17)
+
+A rank-32 LoRA of the base model trained with LeRobot's `flux3` recipe on our main dataset (last 20 % of
+episodes held out, about 25–30; step 250 of 2500 = "preliminary"). It keeps the base normalization quantiles.
+`rollout/models/lora.py` merges it into the `flux_action` weights at load (`W += alpha/r · B·A` on 318
+layers, plus 6 replaced action-head tensors). All targets match the base checkpoint's names and shapes.
+Served with:
+
+```bash
+.venv/bin/python -m rollout.server.space deploy --adapter Gawtam/flux3-chess-lora \
+  --adapter-revision 20c7791657e5055d2b3bd44b25acc66fb619c987 --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849
+```
+
+**Offline, teacher-forced** (`--robot dataset`, default): mean error over the whole episode, degrees (gripper %):
+
+| Joint | ep 25 (held out) | ep 30 (held out) | ep 0 (train) | adapter card, 88 held-out windows | `local:hold` ep 25 / 30 |
+|---|---|---|---|---|---|
+| shoulder_pan | 8.3 | 10.3 | 8.0 | 7.6 | 7.0 / 6.5 |
+| shoulder_lift | 11.2 | 13.0 | 15.0 | 9.9 | 69.3 / 45.5 |
+| elbow_flex | 12.6 | 10.6 | 11.5 | 12.1 | 47.8 / 46.7 |
+| wrist_flex | 11.2 | 9.6 | 10.6 | 9.0 | 10.2 / 9.0 |
+| wrist_roll | 5.2 | 5.6 | 14.0 | 5.3 | 2.8 / 3.0 |
+| gripper | 3.7 | 6.4 | 3.7 | 4.6 | 5.4 / 5.2 |
+
+The served model reproduces the adapter's own offline evaluation, so the merge, protocol, transport and
+units are right. Latency is unchanged: 1.07 s inference, about 1.5 s per request.
+
+**On the real arm** (17:02, one 20 s episode, `--limits-from` main dataset with a 10° margin, 10°/tick, no stall guard):
+plan 1 lifted the arm smoothly from rest (shoulder_lift −97° → −20°, elbow 94° → 62°) in about 1 s, as in the dry run.
+It then drove shoulder_pan to the −28° clamp and wrist_flex to 100–110°, both beyond the demonstrations
+(−13…2°, 65…93°), and pressed the arm into the table from about 6 s: shoulder_lift stuck at 12° with the goal
+held 10° ahead. At 12 s the servos stopped answering ("There is no status packet"), most likely overload
+protection; the arm needed a power cycle. The table hit led to the stall guard, demo-range limits with no
+margin, and the 5°/tick cap above. Likely causes of the bad motion:
+
+1. **Preliminary checkpoint**: about 10° average error per joint is enough to reach the table.
+2. **Stop-and-go execution**: 1.07 s of motion, then 1.5 s holding still while the next plan is computed.
+   The demonstrations are continuous 30 Hz motion, so after each pause the 8-tick history looks unlike training.
+3. **Limits allowed poses the demos never reached.**
+
+Before the next motion run: the new safety defaults, the arm power-cycled, a dry run first, and, to fix
+the pauses, either faster inference (`ROLLOUT_COMPILE=1`, a faster GPU) or overlapping the next request
+with execution (see [Next steps](#next-steps)).
 
 ## Testing
 

@@ -56,6 +56,40 @@ class JointLimits:
         return ", ".join(f"{n.removesuffix('.pos')} [{lo:.0f}, {hi:.0f}]" for n, lo, hi in ranges)
 
 
+class StallGuard:
+    """Detect a blocked arm (collision): a joint far from its goal that has stopped moving.
+
+    Normal tracking lags the goal by up to ~15 degrees during fast moves, but the joint keeps moving; a
+    joint pressed against the table sits still with the goal held ahead of it (2026-10-17: shoulder_lift
+    stuck at 12.0 with the goal 10 degrees beyond for 5 s, until the servos faulted). The gripper is
+    excluded: squeezing a piece stalls it on purpose.
+    """
+
+    def __init__(self, gap_deg: float = 6.0, still_deg: float = 0.5, ticks: int = 10):
+        self.gap_deg, self.still_deg, self.ticks = gap_deg, still_deg, ticks
+        self.joints = [i for i, name in enumerate(ACTION_NAMES) if name != "gripper.pos"]
+        self.reset()
+
+    def reset(self) -> None:
+        self._count = np.zeros(len(ACTION_NAMES), int)
+        self._last_state: np.ndarray | None = None
+        self._last_goal: np.ndarray | None = None
+
+    def update(self, state: np.ndarray, goal: np.ndarray) -> str | None:
+        """Call once per tick with the measured state and the goal just sent; returns the stalled joint."""
+        stalled = None
+        if self._last_goal is not None:
+            gap = np.abs(self._last_goal - state)
+            still = np.abs(state - self._last_state) < self.still_deg
+            blocked = (gap > self.gap_deg) & still
+            self._count = np.where(blocked, self._count + 1, 0)
+            hit = [i for i in self.joints if self._count[i] >= self.ticks]
+            if hit:
+                stalled = ", ".join(f"{ACTION_NAMES[i]} (gap {gap[i]:.0f} deg)" for i in hit)
+        self._last_state, self._last_goal = state.copy(), goal.copy()
+        return stalled
+
+
 @dataclass
 class EpisodeStats:
     ticks: int = 0
@@ -126,6 +160,7 @@ def run_episode(
     log: RunLog | None = None,
     events: dict | None = None,
     teacher_forcing: bool = False,
+    stall_guard: StallGuard | None = None,
 ) -> EpisodeStats:
     """One episode with a fresh history (flux's ``policy.reset()``).
 
@@ -139,7 +174,10 @@ def run_episode(
     history.reset()
     queue: deque[np.ndarray] = deque()
     last_command: np.ndarray | None = None
+    last_goal: np.ndarray | None = None
     stats = EpisodeStats()
+    if stall_guard:
+        stall_guard.reset()
     started = next_tick = time.perf_counter()
     while stats.ticks < max_ticks:
         if events and (events["stop_recording"] or events["exit_early"]):
@@ -149,6 +187,13 @@ def run_episode(
         if observation is None:
             stats.stopped_by = "end of data"
             break
+        if stall_guard and last_goal is not None:
+            stalled = stall_guard.update(observation.state, last_goal)
+            if stalled:
+                robot.act(observation.state)  # stop pushing: hold where the arm is
+                stats.stopped_by = f"stall: {stalled}"
+                logger.warning("episode %d: arm blocked, stopping (%s)", episode, stalled)
+                break
         history.append(observation, last_command)
         if not queue:
             request_started = time.perf_counter()
@@ -178,6 +223,7 @@ def run_episode(
         if not np.array_equal(goal, command):
             stats.clipped_ticks += 1
         sent = robot.act(goal)
+        last_goal = sent
         # flux conditions on its own command, not on the clipped goal
         last_command = robot.recorded_command() if teacher_forcing else command
         if log:
