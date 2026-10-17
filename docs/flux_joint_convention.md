@@ -8,8 +8,13 @@ our joint values to the ones the model expects, and what is it?
 normalized every training dataset with **its own** joint range, so the model learned joint values rescaled to
 about −1…1 per dataset. The released checkpoint then ships **one fixed** range (from MolmoAct-style
 datasets), which puts our values far outside anything the model saw. The mapping that reproduces training
-is: **normalize with our own dataset's quantiles**. It's implemented as `--normalization` and still needs to be
-verified on the GPU (see [Status](#status)).
+is: **normalize with our own dataset's quantiles** (`--normalization`).
+
+**Verified on the GPU (section 7):** with our normalization the zero-shot base model's error on held-out
+episodes halves (13.4° → 6.8° arm, 6.4 → 2.8 % gripper). But on the windows where the demonstrator actually
+moves, **no FLUX variant predicts the motion better than chance**: zero-shot, or the LoRA at steps 250/500. **"Hold the last
+command" beats all of them** on the error metric the LoRA card uses. The mapping fixes the input; it doesn't give the
+model the task. ACT, trained on our demonstrations, tracks the motion (100 % right direction), though on episodes it was trained on.
 
 ## 1. What the model can and can't tell us
 
@@ -135,17 +140,74 @@ on BFL's model code that passing the checkpoint's own quantiles changes nothing 
 **This applies to the zero-shot base model.** The `Gawtam/flux3-chess-lora` adapter was fine-tuned with the
 checkpoint's fixed quantiles, so it learned our values in that normalization. It should keep it, not ours.
 
-## Status
+## 7. Verification on the GPU
 
-- Done: the analysis above, `rollout/normalization.py`, `--normalization` in the model, server, client
-  and `space deploy`, and tests (18 passing).
-- Deployed once (base model + our normalization, 18:43), then paused before testing.
-- **Not yet verified on the GPU.** Next: teacher-forced error on the held-out episodes 24–30, base model with our
-  normalization vs. with the checkpoint's (the LoRA card reports 12.49° arm / 5.82 % gripper for the base
-  with the checkpoint's normalization, 6.72° / 4.24 % for LoRA step 500).
-- **Before any further arm run**, the safety fixes from the step-500 run (see `docs/inference.md`) are still
-  open: the stall guard can't trip with the default 5°/tick cap (6° gap > 5° cap), commands far outside the
-  limits should abort rather than be clamped, and the history should record the clamped goal.
+Setup: the Space (`a100-large`), base model `black-forest-labs/flux-3-action-so101` @ `c9e13b2`, no adapter, run
+twice: once with our normalization, once with the checkpoint's. Teacher-forced dataset replay
+(`python -m rollout run --robot dataset`) on the held-out episodes 24–30 (3,049 frames, 100 plans).
+Same evaluator, same episodes for every row.
+
+### 7.1 Whole-episode error (the metric the LoRA card reports)
+
+Mean |predicted − recorded command| over every executed tick, frame-weighted (`summarize_eval.py`):
+
+| Policy | pan | lift | elbow | wflex | wroll | **arm** | gripper |
+|---|---|---|---|---|---|---|---|
+| FLUX base, checkpoint normalization | 10.91 | 18.32 | 15.84 | 13.98 | 7.76 | **13.36** | 6.40 % |
+| **FLUX base, our normalization** | 3.03 | 12.39 | 11.90 | 4.85 | 1.61 | **6.76** | 2.84 % |
+| *LoRA card: base / step 500 (88 windows, 24–30)* | | | | | | *12.49 / 6.72* | *5.82 / 4.24 %* |
+| **Hold the last command** (`local:hold`) | 1.21 | 8.14 | 6.23 | 3.68 | 0.76 | **4.00** | 1.90 % |
+
+- Our evaluator reproduces the card's base number (13.36° vs. 12.49°), so the comparison holds up.
+- **Our normalization halves the base model's error** on every joint. Zero-shot it matches the card's fine-tuned
+  step 500 (6.76° vs. 6.72°).
+- **But "hold the last command" beats everything.** Under teacher forcing every plan starts from the
+  demonstrator's last command. Most of each episode is slow or still, so not moving scores 4.0°. So this
+  metric can't show whether a model learned the task. Its low numbers mostly mean "didn't move much".
+
+### 7.2 Windows where the demonstrator moved (`motion_windows.py`)
+
+Only the 32-tick plans in which a recorded arm command moves at least 10°. Two questions per joint that moved
+at least 5°: did the model move it **the right way** (at least 10 % of the recorded motion, same sign), and how much of the
+motion did it **cover** (1 = all of it, 0 = none, < 0 = the wrong way)?
+
+| Policy | Episodes | Moving windows | Arm error | Hold error | Right direction | Median coverage |
+|---|---|---|---|---|---|---|
+| FLUX base, checkpoint normalization | 24–30 | 48 | 16.22 | 6.93 | 53 % | 0.74 |
+| FLUX base, our normalization | 24–30 | 48 | 8.79 | 6.93 | 45 % | −0.19 |
+| FLUX + LoRA step 500 (eval stopped partway) | 24, part of 25 | 23 | 10.11 | 7.58 | 54 % | 0.56 |
+| FLUX + LoRA step 250 | 0, 25, 30 | 23 | 12.45 | 7.40 | 49 % | −0.04 |
+| ACT `rtrtwrw/act_chess_c3_to_d5` (*trained on these episodes*) | 0, 25, 30 | 7 | **2.09** | 6.78 | **100 %** | **0.97** |
+| Hold | 24–30 | 48 | 6.93 | 6.93 | 0 % | 0.00 |
+
+- **No FLUX variant predicts the motion**: about 50 % right direction is chance, and all are worse than not moving.
+  With our normalization the base model mostly stays put (coverage −0.19). With the checkpoint's it moves a lot
+  (0.74) but just as often the wrong way, hence the larger error.
+- The LoRA at steps 250 and 500 hasn't learned the motion yet either, consistent with how the step-500 arm run went.
+- ACT follows the demonstrations closely (100 % direction, 97 % coverage), but these are training episodes for it,
+  so this is an upper bound. On the real arm it ran a complete, demonstration-like episode (`docs/inference.md`).
+
+### 7.3 Conclusions
+
+1. **The calibration mapping is solved**: normalize with our own quantiles, exactly as BFL's pretraining
+   treated every dataset. It removes the out-of-range inputs (rest pose at −4.7 → −0.93) and halves the error.
+2. **It doesn't make FLUX zero-shot useful for this task.** That's a capability gap, not a calibration bug.
+3. **Fine-tuning is the way to get a FLUX policy.** Two concrete suggestions for the next LoRA run:
+   - train with **our** normalization (`rollout/normalization.py` gives the quantiles), so the inputs look like
+     pretraining instead of out-of-range values the adapter must first learn around;
+   - select checkpoints by the **moving-window** metric (beats hold? right direction?), not by whole-episode
+     error, which "hold" wins.
+4. **For the arm today, ACT is the policy to use**, fully local (`--policy local:lerobot`).
+
+Cost of this verification: about $0.60 of A100 time. Total on the Space so far: about $2.09 of the $20 budget (the
+ledger's estimate errs high).
+
+## Safety fixes (done)
+
+After the step-500 run, three fixes in `rollout/loop.py` (details in `docs/inference.md`, section Safety):
+a runaway abort (commands > 30° outside the limits stop the episode), a stall guard that can trip under the
+5°/tick cap (3° gap) and ignores the folded arm at rest, and the history recording the sent goal. Replayed on all
+three real-arm logs, both bad runs stop at about 5 s, before the table contact, and the good ACT run never trips.
 
 ## Reproduce
 
@@ -154,3 +216,16 @@ The analysis scripts are in `scripts/flux_convention/`:
 - `joint_stats.py`: section 2 (our ranges and rest pose).
 - `community_groups.py`: section 3 (community_dataset_v3 groups vs. the checkpoint).
 - `corpus_signs.py`: section 5 (rest pose in each training part's normalized range).
+- `summarize_eval.py`: section 7.1, from `rollout run --robot dataset` log folders.
+- `motion_windows.py`: section 7.2, the same log folders, scored on the windows where the demonstrator moved.
+
+```bash
+.venv/bin/python -m rollout.server.space deploy --no-adapter --normalization niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741 \
+  --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849          # or --no-normalization for the checkpoint's
+.venv/bin/python -m rollout run --robot dataset --policy https://niru-5-flux3-so101-rollout.hf.space \
+  --episode 24,25,26,27,28,29,30 --log-dir rollout_logs/eval_ournorm
+.venv/bin/python -m rollout run --robot dataset --policy local:hold --episode 24,25,26,27,28,29,30 --log-dir rollout_logs/eval_hold
+python scripts/flux_convention/summarize_eval.py rollout_logs/eval_ournorm rollout_logs/eval_hold
+python scripts/flux_convention/motion_windows.py rollout_logs/eval_ournorm rollout_logs/eval_hold
+.venv/bin/python -m rollout.server.space stop
+```

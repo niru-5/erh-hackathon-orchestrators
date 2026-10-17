@@ -190,11 +190,23 @@ The model card: *nothing in the model bounds joint velocity, force or workspace*
 - `--limits-from <dataset>` (default: our main dataset; `none` disables it): clamps every joint to the range
   the demonstrations covered (`meta/stats.json` min/max ± `--limit-margin`, default 0°). With a 10° margin,
   the arm was allowed beyond the demos (pan −28°, wrist_flex 110°) and went into the table.
+- **Runaway abort** (`--abort-margin`, default 30°; 0 disables it): a command more than 30° outside the
+  limits isn't clamped. The episode stops and the arm holds where it is. A policy commanding shoulder_lift = 844° has lost
+  track of the arm, and clamping that just presses the arm against the limit.
 - **Stall guard** (default on, `--no-stall-guard` disables it): ends the episode and holds the current position when a
-  non-gripper joint is more than `--stall-gap` (6°) from its goal **and** has stopped moving (< 0.5°/tick) for
-  10 ticks (0.33 s). Normal fast moves trail the goal by up to ~15° but keep moving; a joint pressed
-  against something doesn't. Replayed on the table-hit log it stops at 5.1 s, 7 s before the servos faulted.
-  It's off in `--dry-run`, where the arm never follows the goals.
+  non-gripper joint is more than `--stall-gap` (default **3°**) from its goal **and** has stopped moving (< 0.5°/tick) for
+  10 ticks (0.33 s). The gap must be below `--max-relative-target`: lerobot never lets the goal get further
+  than that from the arm (the CLI refuses otherwise). The first default of 6° could never trip under the 5° cap,
+  which is why the step-500 run wasn't stopped. Normal fast moves trail the goal but keep moving; a joint pressed
+  against something doesn't. Not a stall: a goal beyond the range the demonstrations' arm **reached** while the arm sits
+  within 10° of that edge. At rest the folded arm stops at about −97° shoulder_lift while the demos command down
+  to −103.6°, and policies reproduce that. It's off in `--dry-run`, where the arm never follows the goals.
+- **The history records the goal actually sent** (after the limits and lerobot's per-tick cap), not the
+  model's raw command. Otherwise a clamp leaves a command history the arm never followed, and FLUX, which
+  chains each plan onto that history, runs away.
+- **Replayed on the three real-arm logs** (`scripts/flux_convention/` has the logs' analysis): the LoRA
+  step-250 run (table hit) stops at 4.9 s (runaway, shoulder_lift commanded 73° vs. max 42°). The step-500 run
+  stops at 5.1 s (runaway, 74°), both before the table contact. The good ACT run never trips either check.
 - `--dry-run`: run everything (cameras, model, timing) but never send goals. The arm holds still.
 - Esc stops; → ends the episode early. On exit (also Ctrl+C or an error) lerobot disables torque
   (`disable_torque_on_disconnect`), so **the arm goes limp and drops**: keep a hand under it, and keep a hand near
@@ -331,9 +343,9 @@ demo-range limits with no margin, 5°/tick, stall guard; no dry run):
   inconsistent, the same failure as free-running dataset replay.
 - From about 10 s the elbow sat about 5° from its goal and barely moved: pressing on something. At 30 s the
   servos stopped answering again (overload protection; power cycle needed).
-- **The stall guard couldn't trip.** It needs a gap above 6°, but the 5°/tick cap keeps every goal within
-  about 5° of the arm. This bug in my defaults is still open, together with: abort when commands go far outside
-  the limits (instead of clamping), and record the clamped goal in the history.
+- **The stall guard couldn't trip.** It needed a gap above 6°, but the 5°/tick cap keeps every goal within
+  about 5° of the arm. Fixed (see [Safety](#safety)), together with the runaway abort and recording the
+  sent goal in the history.
 
 That run used the checkpoint's normalization. The zero-shot base model's mismatch is analysed in
 [flux_joint_convention.md](flux_joint_convention.md).
