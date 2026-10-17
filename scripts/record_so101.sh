@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Record SO-101 teleoperation episodes (leader -> follower) into a LeRobotDataset v3.0
+# using the official `lerobot-record` pipeline.
+#
+# Usage:
+#   scripts/record_so101.sh --task "Pick up the red cube and place it in the bowl" --episodes 1
+#
+# Run with --help for all options. Anything after `--` is passed verbatim to lerobot-record.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/record_so101.sh --task "<prompt>" --episodes <N> [options] [-- <extra lerobot-record args>]
+
+Required:
+  --task "<prompt>"       Language instruction stored with every frame (dataset.single_task)
+  --episodes N            Number of episodes to record (dataset.num_episodes)
+
+Options:
+  --repo-id USER/NAME     Dataset id (default: <hf_user>/so101_<YYYYmmdd_HHMMSS>)
+  --root DIR              Local dataset dir (default: ~/.cache/huggingface/lerobot/<repo-id>)
+  --episode-time SEC      Max seconds per episode (default: 60)
+  --reset-time SEC        Seconds to reset the scene between episodes (default: 30)
+  --fps N                 Recording fps (default: 30)
+  --push                  Push the dataset to the Hugging Face Hub when done (default: off)
+  --resume                Append episodes to an existing dataset (requires --repo-id)
+  --no-display            Disable the Rerun live viewer
+  --dry-run               Print the lerobot-record command without running it
+  -h, --help              Show this help
+
+Hardware overrides (env vars):
+  FOLLOWER_PORT, LEADER_PORT, FOLLOWER_ID, LEADER_ID,
+  CAM_LEFT, CAM_RIGHT, CAM_FRONT, CAM_WIDTH, CAM_HEIGHT
+EOF
+}
+
+# --- Hardware defaults (stable by-id paths, so USB re-plugging doesn't swap devices) ---
+FOLLOWER_PORT="${FOLLOWER_PORT:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8E115116-if00}"
+LEADER_PORT="${LEADER_PORT:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8E116682-if00}"
+FOLLOWER_ID="${FOLLOWER_ID:-so101}"   # ~/.cache/huggingface/lerobot/calibration/robots/so_follower/so101.json
+LEADER_ID="${LEADER_ID:-so101}"       # ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/so101.json
+CAM_LEFT="${CAM_LEFT:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0}"
+CAM_RIGHT="${CAM_RIGHT:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0}"
+CAM_FRONT="${CAM_FRONT:-/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0}"
+CAM_WIDTH="${CAM_WIDTH:-640}"
+CAM_HEIGHT="${CAM_HEIGHT:-480}"
+
+TASK=""
+EPISODES=""
+REPO_ID=""
+ROOT=""
+EPISODE_TIME=60
+RESET_TIME=30
+FPS=30
+PUSH=false
+RESUME=false
+DISPLAY_DATA=true
+DRY_RUN=false
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --task) TASK="$2"; shift 2 ;;
+    --episodes) EPISODES="$2"; shift 2 ;;
+    --repo-id) REPO_ID="$2"; shift 2 ;;
+    --root) ROOT="$2"; shift 2 ;;
+    --episode-time) EPISODE_TIME="$2"; shift 2 ;;
+    --reset-time) RESET_TIME="$2"; shift 2 ;;
+    --fps) FPS="$2"; shift 2 ;;
+    --push) PUSH=true; shift ;;
+    --resume) RESUME=true; shift ;;
+    --no-display) DISPLAY_DATA=false; shift ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; EXTRA_ARGS=("$@"); break ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+[[ -n "$TASK" ]] || { echo "error: --task is required" >&2; usage >&2; exit 1; }
+[[ "$EPISODES" =~ ^[1-9][0-9]*$ ]] || { echo "error: --episodes must be a positive integer" >&2; exit 1; }
+if [[ "$RESUME" == true && -z "$REPO_ID" ]]; then
+  echo "error: --resume needs --repo-id of the dataset to append to" >&2; exit 1
+fi
+
+# Locate the venv that has lerobot installed: repo .venv (also from inside a git worktree), else PATH.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MAIN_ROOT="$(cd "$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd || echo "$REPO_ROOT")"
+LEROBOT_RECORD=""
+for venv in "$REPO_ROOT/.venv" "$MAIN_ROOT/.venv"; do
+  if [[ -x "$venv/bin/lerobot-record" ]]; then LEROBOT_RECORD="$venv/bin/lerobot-record"; break; fi
+done
+LEROBOT_RECORD="${LEROBOT_RECORD:-$(command -v lerobot-record || true)}"
+[[ -n "$LEROBOT_RECORD" ]] || { echo "error: lerobot-record not found (see docs/data_collection.md)" >&2; exit 1; }
+HF_CLI="$(dirname "$LEROBOT_RECORD")/hf"
+
+if [[ -z "$REPO_ID" ]]; then
+  HF_USER="$("$HF_CLI" auth whoami 2>/dev/null | sed -n 's/^user=//p' | head -1 || true)"
+  REPO_ID="${HF_USER:-local}/so101_$(date +%Y%m%d_%H%M%S)"
+fi
+
+# Sanity-check hardware before starting.
+for dev in "$FOLLOWER_PORT" "$LEADER_PORT" "$CAM_LEFT" "$CAM_RIGHT" "$CAM_FRONT"; do
+  [[ -e "$dev" ]] || { echo "error: device not found: $dev" >&2; exit 1; }
+done
+
+# OpenCV wants the real /dev/videoN node.
+cam() { echo "{type: opencv, index_or_path: $(readlink -f "$1"), width: $CAM_WIDTH, height: $CAM_HEIGHT, fps: $FPS}"; }
+CAMERAS="{left_side: $(cam "$CAM_LEFT"), right_side: $(cam "$CAM_RIGHT"), front: $(cam "$CAM_FRONT")}"
+
+ARGS=(
+  --robot.type=so101_follower
+  --robot.port="$FOLLOWER_PORT"
+  --robot.id="$FOLLOWER_ID"
+  --robot.cameras="$CAMERAS"
+  --teleop.type=so101_leader
+  --teleop.port="$LEADER_PORT"
+  --teleop.id="$LEADER_ID"
+  --dataset.repo_id="$REPO_ID"
+  --dataset.single_task="$TASK"
+  --dataset.num_episodes="$EPISODES"
+  --dataset.episode_time_s="$EPISODE_TIME"
+  --dataset.reset_time_s="$RESET_TIME"
+  --dataset.fps="$FPS"
+  --dataset.push_to_hub="$PUSH"
+  --dataset.streaming_encoding=true
+  --dataset.encoder_threads=2
+  --display_data="$DISPLAY_DATA"
+  --resume="$RESUME"
+)
+[[ -n "$ROOT" ]] && ARGS+=(--dataset.root="$ROOT")
+
+echo "Recording $EPISODES episode(s) -> $REPO_ID"
+echo "Task: $TASK"
+if [[ "$DRY_RUN" == true ]]; then
+  printf '%q ' "$LEROBOT_RECORD" "${ARGS[@]}" "${EXTRA_ARGS[@]}"; echo
+  exit 0
+fi
+set -x
+exec "$LEROBOT_RECORD" "${ARGS[@]}" "${EXTRA_ARGS[@]}"
