@@ -37,6 +37,12 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--dataset", default=MAIN_DATASET, help=f"dataset repo id for --robot dataset (default {MAIN_DATASET})"
     )
     run.add_argument("--dataset-root", help="local dataset dir (default: lerobot cache, then the Hub)")
+    run.add_argument(
+        "--teacher-forcing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="dataset: history uses the recorded commands, as in the adapter's offline eval (default on)",
+    )
     run.add_argument("--episode-time", type=float, default=30.0, help="max seconds per episode (default 30)")
     run.add_argument("--reset-time", type=float, default=15.0, help="so101: seconds between episodes (default 15)")
     safety = run.add_argument_group("safety (so101)")
@@ -169,6 +175,7 @@ def main(argv=None) -> int:
                 task=args.task,
                 episode=episode,
                 max_ticks=max_ticks,
+                teacher_forcing=args.robot == "dataset" and args.teacher_forcing,
                 limits=limits,
                 log=log,
                 events=events,

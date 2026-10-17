@@ -125,8 +125,16 @@ def run_episode(
     limits: JointLimits | None = None,
     log: RunLog | None = None,
     events: dict | None = None,
+    teacher_forcing: bool = False,
 ) -> EpisodeStats:
-    """One episode with a fresh history (flux's ``policy.reset()``)."""
+    """One episode with a fresh history (flux's ``policy.reset()``).
+
+    ``teacher_forcing`` (recorded data only): the history records the demonstrator's command for each tick
+    instead of the model's, so every plan starts from a consistent state/command history. Without it, a
+    replayed recording doesn't follow the model's commands and the history drifts out of distribution.
+    """
+    if teacher_forcing and not hasattr(robot, "recorded_command"):
+        raise ValueError("teacher forcing needs a robot that replays recorded commands")
     period = 1.0 / spec.fps
     history.reset()
     queue: deque[np.ndarray] = deque()
@@ -170,7 +178,8 @@ def run_episode(
         if not np.array_equal(goal, command):
             stats.clipped_ticks += 1
         sent = robot.act(goal)
-        last_command = command  # flux conditions on its own command, not on the clipped goal
+        # flux conditions on its own command, not on the clipped goal
+        last_command = robot.recorded_command() if teacher_forcing else command
         if log:
             log.tick(
                 episode=episode,

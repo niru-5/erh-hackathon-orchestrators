@@ -48,6 +48,10 @@ class DatasetRobot:
         }
         return Observation(state=item["observation.state"].numpy().astype(np.float32), images=images)
 
+    def recorded_command(self) -> np.ndarray:
+        """The demonstrator's command at the current tick (for teacher-forced evaluation)."""
+        return self._current_action
+
     def act(self, action: np.ndarray) -> np.ndarray:
         self._predicted.append(np.asarray(action, dtype=np.float32))
         self._recorded.append(self._current_action)

@@ -143,3 +143,31 @@ def test_joint_limits_from_dataset_stats(tmp_path):
     limits = JointLimits.from_dataset(str(tmp_path), margin=10)
     np.testing.assert_allclose(limits.low, [-20, -30, -40, 30, -90, 0])
     np.testing.assert_allclose(limits.high, [15, 50, 100, 110, -50, 47])
+
+
+class ReplayRobot(FakeRobot):
+    """A recording: the state never follows the goals, and each tick has a recorded command."""
+
+    def observe(self):
+        self.tick = getattr(self, "tick", -1) + 1
+        return super().observe()
+
+    def act(self, action):
+        self.sent.append(action)
+        return action
+
+    def recorded_command(self):
+        return np.full(6, 100.0 + self.tick, np.float32)
+
+
+def test_teacher_forcing_anchors_each_plan_on_the_recorded_command():
+    robot = ReplayRobot(ticks=70)
+    backend = LocalBackend(RampModel())
+    spec = backend.spec()
+    robot.start_episode(0)
+    run_episode(robot, backend, spec, History(spec), task="t", episode=0, max_ticks=1000, teacher_forcing=True)
+    sent = np.stack(robot.sent)[:, 0]
+    # plan 2 starts at tick 32 from the recorded command of tick 31 (131), not from the model's own chain (32)
+    assert sent[31] == 32 and sent[32] == 132 and sent[64] == 100 + 63 + 1
+    with pytest.raises(ValueError):
+        run_episode(FakeRobot(5), backend, spec, History(spec), task="t", episode=0, max_ticks=5, teacher_forcing=True)
