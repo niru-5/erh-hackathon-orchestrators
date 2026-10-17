@@ -109,13 +109,16 @@ def _wait_running(api: HfApi, args) -> None:
     if args.no_wait:
         return
     print("waiting for the server (first start: image build + ~25 GB weight download, can take 15+ min)...")
-    deadline, last = time.monotonic() + args.wait_timeout, None
+    started = time.monotonic()
+    deadline, last, moved = started + args.wait_timeout, None, False
     while time.monotonic() < deadline:
         stage = _stage(api, args.space_id)
         if stage != last:
             print(f"  {datetime.now():%H:%M:%S} {stage}")
             last = stage
-        if stage in FINAL_STAGES:
+        # Right after a (re)start request the Hub can still report the old PAUSED/STOPPED stage.
+        moved = moved or stage not in ("PAUSED", "STOPPED")
+        if stage in FINAL_STAGES and (moved or time.monotonic() - started > 120):
             break
         time.sleep(15)
     if last != "RUNNING":
@@ -153,13 +156,12 @@ def start(api: HfApi, args, ledger: Ledger) -> None:
     runtime = api.get_space_runtime(args.space_id)
     stage = getattr(runtime.stage, "value", str(runtime.stage))
     if runtime.requested_hardware != args.hardware:
-        # Changing the flavor also (re)starts the Space on it.
         print(f"switching {args.space_id} from {runtime.requested_hardware} to {args.hardware}")
         api.request_space_hardware(args.space_id, args.hardware, sleep_time=args.sleep_time)
-    elif stage in STARTED_STAGES:
+    if stage in STARTED_STAGES:
         print(f"{args.space_id} is already {stage}")
     else:
-        api.restart_space(args.space_id)
+        api.restart_space(args.space_id)  # a paused Space stays paused after a hardware change
     ledger.start(args.space_id, args.hardware)
     _wait_running(api, args)
 
