@@ -34,12 +34,12 @@ Mean error vs. the recorded actions, degrees (gripper %):
 It clearly follows the task (lift and elbow errors a third of doing nothing), but the 100-step open-loop plans
 drift in time against the demonstrator, which shows up as large lift and elbow errors.
 
-### On the real arm: five 20 s episodes (20:30–20:35)
+### On the real arm: six 20 s episodes (20:30–20:38)
 
 All with the safety defaults (demo-range limits, 5°/tick cap, stall guard, runaway abort). Every run completed the
 full 20 s (600 ticks, 6 plans) with **no stall, no runaway and no bus error**. 0.43–0.47 s per plan on the CPU,
 26.3–26.6 Hz, the arm moving about 88 % of the time. Logs (git-ignored): `rollout_logs/20261017_203042`, `_203144`,
-`_203259`, `_203441`, `_203518`.
+`_203259`, `_203441`, `_203518`, `_203825`.
 
 | Run | Start pose | Reach c3, gripper opens | Gripper closes | Carry pose toward d5 (pan / lift / elbow) | Release at d5 | Back at rest | Afterwards | Ticks clamped by limits |
 |---|---|---|---|---|---|---|---|---|
@@ -48,13 +48,15 @@ full 20 s (600 ticks, 6 plans) with **no stall, no runaway and no bus error**. 0
 | 3 (20:32:59) | rest | 26 % at 2.1 s | 5.4 s (3.2 % vs 3.0 %) | −4° / 11° / 13° (6.7–8 s) | 9 % at 8.8 s | 11.5 s | second attempt, closes empty at 17 s | 23 |
 | 4 (20:34:41) | **lift −46°** (run 3 ended mid-air, the limp arm settled there) | only 11 % | 4.4 s (2–4 %) | −2° / 16° / 8° (5.4–6.4 s) | 12–13 % at 7.9 s | never (partial, lift −49° at 11 s) | hovered near c3, gripper 6–14 % | 0 |
 | 5 (20:35:18) | rest | 28 % at 2–4 s | 5.4 s (3.8 % vs 2.5 %) | −4° / 11° / 6° (8–9 s) | **none** (stayed 3–4 %) | 12.3 s | second attempt, opens 17 %, closes at 17.8 s | 34 |
+| 6 (20:38:25) | rest | 23 % at 1.4 s | 4.1 s (1.8 % vs 1.4 %) | −3° / 22° / −3° (5.4 s) | 12–14 % at 7.9 s | never (partial, lift −50° at 11.3 s) | second pick (closes 14.1 s) and carry to pan −5° (15.7–16.7 s), no clear release; heading back to c3 at 20 s | 18 |
 
 Reading:
 
 - **The motion is consistent.** In every run it reaches c3 (pan −10 to −14°), closes the gripper at 4–5.5 s, swings
-  toward d5 (pan −2 to −4°, a longer reach), and in 4 of 5 runs opens the gripper there. In 3 of 5 it goes back to rest
-  by 11.5–12.8 s and starts a second attempt; the other two stay near the board.
-- **The release is weak**: it opens to 6–13 % at d5, against about 15 % for the 31-episode ACT, and run 5 didn't open.
+  toward d5 (pan −2 to −4°, a longer reach), and in 5 of 6 runs opens the gripper there. In 3 of 6 it goes back to rest
+  by 11.5–12.8 s and starts a second attempt; run 6 starts its second pick from a partial retreat, and runs 2 and 4 stay
+  near the board. Run 6 was the fastest cycle (release at 7.9 s).
+- **The release is weak**: it opens to 6–14 % at d5, against about 15 % for the 31-episode ACT, and run 5 didn't open.
 - **Whether the piece is held can't be read from the joints.** While closed, the gripper sits 0.2–1.5 % above its
   command, a small gap; the 31-episode ACT held the piece at 5.5 %. Whether the piece reached d5 was judged by eye and
   not logged.

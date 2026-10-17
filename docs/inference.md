@@ -383,7 +383,7 @@ longer reach (lift 25°, elbow 1°) to 12 s, opened the gripper (14.6 %) at 12.5
 17 s. Tracking stayed within the 5°/tick cap. 137 ticks were clamped, mostly at rest, where ACT asks to
 press slightly below the demo minimum. Whether the piece landed on d5 was checked by eye, not logged.
 
-More ACT runs (a 15-episode, 4000-step model, five real-arm episodes compared) are in
+More ACT runs (a 15-episode, 4000-step model, six real-arm episodes compared) are in
 [act_inference_experiments.md](act_inference_experiments.md).
 
 ## LoRA trained with our normalization: `Gawtam/flux3-chess-lora-ownstats` (2026-10-17, 19:31)
