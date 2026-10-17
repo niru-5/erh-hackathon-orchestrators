@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Camera test frames from scripts/check_cameras.py
+camera_check/

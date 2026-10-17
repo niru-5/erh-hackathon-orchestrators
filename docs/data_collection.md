@@ -121,6 +121,48 @@ print(ds.meta.tasks)
 .venv/bin/lerobot-dataset-viz --repo-id <repo-id> --episode-index 0
 ```
 
+## Pre-recording checks
+
+Both scripts are read-only. They don't move the arms or enable torque.
+
+```bash
+.venv/bin/python scripts/check_calibration.py         # calibration files vs. values stored in the motors
+.venv/bin/python scripts/check_cameras.py camera_check # saves one JPEG per camera to camera_check/
+scripts/record_so101.sh --task "test" --episodes 1 --dry-run   # print the exact lerobot-record command
+```
+
+## Setup & verification log (2026-10-17)
+
+Steps done to set up recording on the laptop:
+
+1. **Found the lerobot install.** `./lerobot` is the official repo (`huggingface/lerobot`, commit
+   `30da8e6`, version `0.6.0`), installed editable in `./.venv` (Python 3.12) with all `lerobot-*` CLIs.
+   The official recording pipeline is `lerobot-record`. It writes LeRobotDataset `v3.0`
+   (`CODEBASE_VERSION = "v3.0"`). Hugging Face login: `niru-5`.
+2. **Identified the arms.** Two Feetech/CH340 USB serial adapters. Used the port assignment saved by leLab
+   (`~/.cache/huggingface/lerobot/robots/so101.json`): follower = `ttyACM0` (serial `5B8E115116`),
+   leader = `ttyACM1` (serial `5B8E116682`). The script uses the `/dev/serial/by-id/...` paths so the
+   two can't swap. The user is in the `dialout` group.
+3. **Identified the cameras.** Mapped `/dev/v4l/by-id` to the 3 cameras configured in leLab:
+   `left_side` = C920 `2ED4DF6F` (`video4`), `right_side` = C920 (`video6`), `ff` = Sonix USB2.0_CAM1
+   (`video2`, wrist/gripper cam). The built-in laptop webcam (`video0`) is unused. Camera names match
+   the earlier leLab datasets.
+4. **Checked the calibration.** `~/.cache/huggingface/lerobot/calibration/robots/so_follower/so101.json`
+   and `.../teleoperators/so_leader/so101.json` each have all 6 joints (`shoulder_pan`…`gripper`,
+   motor ids 1–6). `scripts/check_calibration.py` confirmed that both files match the values stored in
+   the motors (`motors match file = True`), so recording won't prompt for recalibration. They are used
+   via `--robot.id=so101` / `--teleop.id=so101`.
+5. **Checked the cameras.** `scripts/check_cameras.py` got a 640×480 frame from all three. `right_side`
+   sees the chessboard and arm; `ff` sees the board between the gripper fingers. `left_side` was
+   blocked at check time, so check its framing before recording.
+6. **Checked the recording settings.** The `--dry-run` command was parsed with lerobot's own
+   `RecordConfig` (draccus): `SOFollowerRobotConfig` + `SOLeaderTeleopConfig`, 3 cameras,
+   `single_task` = the `--task` prompt, `num_episodes` = `--episodes`, `push_to_hub=false`.
+7. **Checked the output format.** An earlier leLab recording (`niru-5/test_2_20261017_120222`) loads
+   with `LeRobotDataset` as `v3.0` (2 episodes, 857 frames) with the layout shown above.
+8. **Keyboard controls.** The laptop runs Wayland, so lerobot 0.6.0 uses its terminal key listener:
+   arrow keys and Esc must be pressed in the recording terminal.
+
 ## Setup (already done on the recording laptop)
 
 lerobot is cloned at `./lerobot` (from https://github.com/huggingface/lerobot, `v0.6.0`) and
