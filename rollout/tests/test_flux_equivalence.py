@@ -137,3 +137,55 @@ def test_chunk_protocol_matches_select_action_loop():
     np.testing.assert_allclose(np.stack(ours), np.stack(reference), rtol=0, atol=1e-4)
     # sanity: the model actually moves (the comparison isn't trivially between constants)
     assert np.abs(np.diff(np.stack(reference)[:, 0])).max() > 1e-3
+
+
+def write_adapter(directory, tensors, r=4, alpha=8):
+    import json
+
+    from safetensors.torch import save_file
+
+    directory.mkdir()
+    (directory / "adapter_config.json").write_text(json.dumps({"peft_type": "LORA", "r": r, "lora_alpha": alpha}))
+    save_file(tensors, str(directory / "adapter_model.safetensors"))
+
+
+def test_lora_merge_matches_peft_formula(tmp_path):
+    """LeRobot adapter names (base_model.model.dit.*) land on flux_action weights: W + alpha/r * B @ A."""
+    from rollout.models.lora import merge_lora
+
+    policy = tiny_so101_policy()
+    target, head = "dit.content_mode_blocks.action.0.q_proj.weight", "dit.emb_in.action.weight"
+    before = {k: policy.state_dict()[k].clone() for k in (target, head)}
+    out_features, in_features = before[target].shape
+    g = torch.Generator().manual_seed(1)
+    a, b = torch.randn(4, in_features, generator=g), torch.randn(out_features, 4, generator=g)
+    new_head = torch.randn(before[head].shape, generator=g)
+    module = target.removesuffix(".weight")
+    write_adapter(
+        tmp_path / "adapter",
+        {
+            f"base_model.model.{module}.lora_A.weight": a,
+            f"base_model.model.{module}.lora_B.weight": b,
+            f"base_model.model.{head}": new_head,
+        },
+    )
+    summary = merge_lora(policy, str(tmp_path / "adapter"))
+    assert summary["lora_layers"] == 1 and summary["replaced"] == 1 and summary["scale"] == 2.0
+    after = policy.state_dict()
+    torch.testing.assert_close(after[target], before[target] + 2.0 * b @ a)
+    torch.testing.assert_close(after[head], new_head)
+
+
+def test_lora_merge_rejects_unknown_modules(tmp_path):
+    from rollout.models.lora import merge_lora
+
+    policy = tiny_so101_policy()
+    write_adapter(
+        tmp_path / "adapter",
+        {
+            "base_model.model.dit.no_such_layer.lora_A.weight": torch.zeros(4, 8),
+            "base_model.model.dit.no_such_layer.lora_B.weight": torch.zeros(8, 4),
+        },
+    )
+    with pytest.raises(KeyError):
+        merge_lora(policy, str(tmp_path / "adapter"))

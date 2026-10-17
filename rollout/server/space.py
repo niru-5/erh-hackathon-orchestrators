@@ -36,6 +36,7 @@ FILES = [
     "models/__init__.py",
     "models/flux.py",
     "models/hold.py",
+    "models/lora.py",
     "server/__init__.py",
     "server/__main__.py",
     "server/app.py",
@@ -142,12 +143,26 @@ def deploy(api: HfApi, args, ledger: Ledger) -> None:
     ]
     api.create_commit(args.space_id, operations, repo_type="space", commit_message="Deploy rollout model server")
     api.add_space_secret(args.space_id, "HF_TOKEN", token, description="read access to the gated policy")
-    for key, value in (("ROLLOUT_WEIGHTS", args.weights), ("ROLLOUT_REVISION", args.revision)):
+    variables = {
+        "ROLLOUT_WEIGHTS": args.weights,
+        "ROLLOUT_REVISION": args.revision,
+        "ROLLOUT_ADAPTER": args.adapter,
+        "ROLLOUT_ADAPTER_REVISION": args.adapter_revision,
+    }
+    for key, value in variables.items():
         if value:
             api.add_space_variable(args.space_id, key, value)
+    if args.no_adapter:
+        existing = api.get_space_variables(args.space_id)
+        for key in ("ROLLOUT_ADAPTER", "ROLLOUT_ADAPTER_REVISION"):
+            if key in existing:
+                api.delete_space_variable(args.space_id, key)
     api.request_space_hardware(args.space_id, args.hardware, sleep_time=args.sleep_time)
+    if _stage(api, args.space_id) in ("PAUSED", "STOPPED"):
+        api.restart_space(args.space_id)  # a hardware request doesn't unpause
     ledger.start(args.space_id, args.hardware)
-    print(f"deployed https://huggingface.co/spaces/{args.space_id} on {args.hardware}")
+    model = (args.weights or "flux-3-action-so101") + (f" + {args.adapter}" if args.adapter else "")
+    print(f"deployed https://huggingface.co/spaces/{args.space_id} on {args.hardware}: {model}")
     _wait_running(api, args)
 
 
@@ -202,6 +217,9 @@ def main() -> None:
     )
     parser.add_argument("--weights", help="deploy: policy repo (default black-forest-labs/flux-3-action-so101)")
     parser.add_argument("--revision", help="deploy: pin the policy's Hub revision")
+    parser.add_argument("--adapter", help="deploy: LeRobot PEFT LoRA to merge, e.g. Gawtam/flux3-chess-lora")
+    parser.add_argument("--adapter-revision", help="deploy: pin the adapter's Hub revision")
+    parser.add_argument("--no-adapter", action="store_true", help="deploy: remove a previously set adapter")
     parser.add_argument("--no-wait", action="store_true", help="deploy/start: return without waiting for RUNNING")
     parser.add_argument("--wait-timeout", type=float, default=2400, help="seconds to wait for RUNNING (default 2400)")
     args = parser.parse_args()

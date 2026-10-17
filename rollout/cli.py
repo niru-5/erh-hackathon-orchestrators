@@ -64,6 +64,8 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--weights", help="flux: Hub repo or local package (default black-forest-labs/flux-3-action-so101)"
     )
     model.add_argument("--revision", help="flux: Hub revision to pin")
+    model.add_argument("--adapter", help="flux: LeRobot PEFT LoRA to merge, e.g. Gawtam/flux3-chess-lora")
+    model.add_argument("--adapter-revision", help="flux: adapter revision to pin")
     model.add_argument("--device", default="cuda")
     model.add_argument("--compile", action="store_true", help="flux: torch.compile the DiT (slow first request)")
     model.add_argument("--hold-delay", type=float, default=0.0, help="hold: simulated inference seconds")
@@ -76,7 +78,13 @@ def _backend(args):
     if args.policy.startswith(("http://", "https://")):
         return make_backend(args.policy, jpeg_quality=args.jpeg_quality, timeout_s=args.timeout)
     if args.policy == "local:flux":
-        kwargs = {"device": args.device, "compile_dit": args.compile, "revision": args.revision}
+        kwargs = {
+            "device": args.device,
+            "compile_dit": args.compile,
+            "revision": args.revision,
+            "adapter": args.adapter,
+            "adapter_revision": args.adapter_revision,
+        }
         if args.weights:
             kwargs["weights"] = args.weights
         return make_backend(args.policy, **kwargs)

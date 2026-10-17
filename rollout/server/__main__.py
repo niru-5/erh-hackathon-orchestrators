@@ -25,6 +25,14 @@ def main() -> None:
         help="flux: Hub repo or local package (env ROLLOUT_WEIGHTS)",
     )
     parser.add_argument("--revision", default=os.environ.get("ROLLOUT_REVISION") or None, help="flux: Hub revision")
+    parser.add_argument(
+        "--adapter",
+        default=os.environ.get("ROLLOUT_ADAPTER") or None,
+        help="flux: LeRobot PEFT LoRA to merge, e.g. Gawtam/flux3-chess-lora (env ROLLOUT_ADAPTER)",
+    )
+    parser.add_argument(
+        "--adapter-revision", default=os.environ.get("ROLLOUT_ADAPTER_REVISION") or None, help="flux: adapter revision"
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
         "--compile",
@@ -42,6 +50,8 @@ def main() -> None:
     if args.model == "flux":
         kwargs = {
             "revision": args.revision,
+            "adapter": args.adapter,
+            "adapter_revision": args.adapter_revision,
             "device": args.device,
             "compile_dit": args.compile,
             "offload_text_encoder": args.offload_text_encoder,

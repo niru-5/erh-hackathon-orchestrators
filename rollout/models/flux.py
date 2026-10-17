@@ -23,6 +23,8 @@ class FluxModel:
         device: str = "cuda",
         compile_dit: bool = False,
         offload_text_encoder: bool = False,
+        adapter: str | None = None,  # LeRobot PEFT LoRA merged into the weights, e.g. Gawtam/flux3-chess-lora
+        adapter_revision: str | None = None,
         policy=None,  # an already loaded FluxActionPolicy (tests)
     ):
         from flux_action.processing.history import snapshot_indices
@@ -32,6 +34,10 @@ class FluxModel:
             from flux_action.inference.so101 import load_policy
 
             policy = load_policy(weights, revision=revision)
+            if adapter:
+                from .lora import merge_lora
+
+                merge_lora(policy, adapter, adapter_revision)  # on CPU, before the GPU/serving preparation
             prepare_for_serving(
                 policy, device=device, compile_dit=compile_dit, offload_text_encoder=offload_text_encoder
             )
@@ -42,7 +48,7 @@ class FluxModel:
         canvas_h, canvas_w = cfg.canvas_hw
         self._keys = tuple(cfg.camera_keys)  # "images.scene", "images.wrist"
         self._spec = PolicySpec(
-            name=weights if isinstance(weights, str) else "flux",
+            name=(weights if isinstance(weights, str) else "flux") + (f"+{adapter}" if adapter else ""),
             camera_keys=tuple(key.removeprefix("images.") for key in self._keys),
             n_obs_steps=cfg.n_obs_steps,
             snapshot_indices=tuple(snapshot_indices(cfg)),
