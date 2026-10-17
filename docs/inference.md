@@ -383,6 +383,69 @@ longer reach (lift 25°, elbow 1°) to 12 s, opened the gripper (14.6 %) at 12.5
 17 s. Tracking stayed within the 5°/tick cap. 137 ticks were clamped, mostly at rest, where ACT asks to
 press slightly below the demo minimum. Whether the piece landed on d5 was checked by eye, not logged.
 
+## LoRA trained with our normalization: `Gawtam/flux3-chess-lora-ownstats` (2026-10-17, 19:31)
+
+A rank-32 LoRA like `Gawtam/flux3-chess-lora`, but trained with **our dataset's own quantiles** (training
+episodes 0–23) instead of the checkpoint's, as [flux_joint_convention.md](flux_joint_convention.md) section 7.3
+suggests. Step 125, EMA weights (repo root, revision `ef2c656`). The quantiles live in the adapter's processor
+files, not in the base checkpoint, so the server must normalize with them. They use the same scheme as
+flux_action (delta actions, absolute gripper, clip 6), so they go in through `--normalization` as a JSON file:
+
+```bash
+.venv/bin/python -I - <<'EOF'   # adapter processor files -> ownstats_norm.json
+import json
+from huggingface_hub import hf_hub_download
+from safetensors.numpy import load_file
+f = lambda name: load_file(hf_hub_download("Gawtam/flux3-chess-lora-ownstats", name,
+                                           revision="ef2c656feb58664812b6cfd5f8f797b8b75f88d4"))
+obs = f("policy_preprocessor_step_3_flux3_observation_history_normalizer.safetensors")
+act = f("policy_preprocessor_step_4_flux3_action_target_normalizer.safetensors")
+q = lambda t, k: {s: t[f"{k}.{s}"].astype(float).tolist() for s in ("q01", "q99")}
+json.dump({"source": "Gawtam/flux3-chess-lora-ownstats@ef2c656", "state": q(obs, "state"),
+           "action": q(act, "action")}, open("ownstats_norm.json", "w"))
+EOF
+.venv/bin/python -m rollout.server.space deploy --adapter Gawtam/flux3-chess-lora-ownstats \
+  --adapter-revision ef2c656feb58664812b6cfd5f8f797b8b75f88d4 --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849 \
+  --normalization ownstats_norm.json
+```
+
+`/spec` then names the model `…+Gawtam/flux3-chess-lora-ownstats [norm: …]`.
+
+**Offline, teacher-forced**, mean error, degrees (gripper %):
+
+| Joint | ep 25 (held out) | ep 30 (held out) | adapter card, 88 held-out windows |
+|---|---|---|---|
+| shoulder_pan | 3.0 | 3.5 | 2.5 |
+| shoulder_lift | 13.6 | 11.5 | 12.3 |
+| elbow_flex | 10.7 | 12.4 | 10.6 |
+| wrist_flex | 4.9 | 5.8 | 4.5 |
+| wrist_roll | 1.2 | 1.4 | 1.7 |
+| gripper | 2.2 | 3.2 | 2.6 |
+| arm mean | 6.7 | 6.9 | 6.3 |
+
+The served model reproduces the card, so the merge and the normalization are right. Latency is unchanged:
+1.05 s inference, 1.48 s per request.
+
+**Dry run** (19:30): stopped at 12 s by the runaway abort (elbow_flex commanded −64°). The commands lift out
+toward c3 over plans 2–3, then keep extending the elbow, which is expected when the arm never follows (the
+history fills with commands that were never executed), as in the free-running dataset replay.
+
+**On the real arm** (19:31, one 20 s episode, safety defaults):
+
+- 0–2.5 s (plan 1): folds further at rest (shoulder_lift commanded −102°), as the demos and base FLUX do.
+- 4–7.5 s (plans 2–3): pans toward c3 onto the −18° pan limit, lifts partway (lift −97 → −79°, elbow 86 → 69°)
+  and opens the gripper (1 → 30 %).
+- 9–13 s (plans 4–5): goes **back to rest** instead of reaching on (lift −96°, elbow 96°, wrist_flex down to 45°).
+- 14–18 s (plans 6–7): lifts out again to the same partial reach (lift −79°, elbow 63°).
+- 19.6–22 s (plan 8): heads back toward rest. The stall guard ends the episode at tick 264 (wrist_flex held at 65°
+  vs. goal 61°, not moving; probably the gripper touching the table or the arm).
+
+No runaway and no bus error, 125 clamped ticks (mostly pan at −18° and the rest pose). But it never got near c3
+(ACT reached lift 6°, elbow 26°) and never closed the gripper. It oscillates between rest and a partial reach.
+That's similar to base FLUX with our normalization, slightly further out. Likely causes: an early checkpoint
+(step 125; shoulder_lift and elbow errors are still 11–14°), and the stop-and-go execution (1.07 s of motion,
+then 1.5 s still), after which the 8-tick history looks like an arm at rest.
+
 ## Testing
 
 ```bash
