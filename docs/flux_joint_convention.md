@@ -302,6 +302,18 @@ the arm within 5.5° of every goal. 344 ticks clamped (pan asking down to −33�
 
 wrist_roll drifted −92 → +12° (toward the community rest ≈ 0°), more than with our stats.
 
+**Second real-arm run** (`real_mediannorm_2/20261017_231039`, same setup): stopped by the stall guard at tick 407
+(13.6 s), shoulder_lift held at −86° vs. goal −81°. 329 ticks clamped, mostly pan (commanded down to −45°, held at −18°).
+
+| Time | Joints (state) | Reading |
+|---|---|---|
+| 0–1.6 s | pan −3 → −17°, lift −92 → −96° | turns toward c3, tucks in at rest |
+| 2.4–6.4 s | gripper 1 → 37 %, elbow 97 → 15°, lift ≈ −87° | opens, reaches with the elbow, shoulder low |
+| 7–12 s | lift −95…−97°, elbow 25–32°, wrist_flex 99 → 45°, gripper 37 % | stays low, wrist tipping down |
+| 12.8–13.5 s | elbow 10 → −20°, wrist_flex 98°; lift commanded −64° but stays at −86° | blocked, probably the gripper on the board |
+
+No grasp attempt this time (gripper open throughout). wrist_roll −96 → −20°.
+
 **Reading:** the median stats are a valid alternative (same convention, same lift/elbow/gripper view) and slightly
 livelier on the arm: further elbow extension (10° vs. 20°), a pick-then-move shape. But the shoulder still never
 rises (max −52°; the demos grasp at about +6°), the gripper closes empty, and wrist_roll drifts further. Not better
