@@ -140,7 +140,7 @@ be older than the model expects. That's a possible next step (see [Next steps](#
 
 | Target | How | Notes |
 |---|---|---|
-| **Hugging Face Space (Docker, GPU)** | `python -m rollout.server.space deploy` creates a private Docker Space from `rollout/server/Dockerfile` on an `l40sx1` (48 GB) GPU | $1.80/h while starting or running, run only during sessions (see [Sessions and budget](#sessions-and-budget)). Needs secret `HF_TOKEN` with access to the gated model |
+| **Hugging Face Space (Docker, GPU)** | `python -m rollout.server.space deploy` creates a private Docker Space from `rollout/server/Dockerfile` on an `a100-large` (80 GB) GPU | $2.50/h while starting or running, run only during sessions (see [Sessions and budget](#sessions-and-budget)). Needs secret `HF_TOKEN` with access to the gated model |
 | Any GPU box | `docker build -f rollout/server/Dockerfile .` and run it, or `python -m rollout.server --model flux` in a flux-action environment | Point the client at `http://<host>:7860` |
 | In-process | `--policy local:flux` | Only on a machine with a ≥ 32 GB GPU |
 | Mock | `--policy local:hold`, or a server started with `--model hold` | No GPU. Tests the robot loop, the HTTP path and timing |
@@ -151,19 +151,21 @@ a 30 Hz control loop (the GPU is allocated per call, with queueing).
 
 ### Sessions and budget
 
-The Space only runs while we work with it. Total spend is capped at **$20**, about 11 h of L40S.
+The Space only runs while we work with it. Total spend is capped at **$20**, about 8 h of A100 ($2.50/h).
+We use `a100-large` because Hugging Face had no free `l40sx1` (48 GB, $1.80/h) on 2026-10-17 ("Scheduling
+failure: not enough hardware capacity"). `start --hardware l40sx1` switches back when there is capacity.
 
 | When | Command | Effect |
 |---|---|---|
-| Once | `python -m rollout.server.space deploy` | Creates the private Space `niru-5/flux3-so101-rollout`, uploads the server and Dockerfile, stores the `HF_TOKEN` secret, requests `l40sx1`, waits until it serves |
-| Session start | `python -m rollout.server.space start` | Resumes the paused Space and waits until `RUNNING` |
+| Once | `python -m rollout.server.space deploy` | Creates the private Space `niru-5/flux3-so101-rollout`, uploads the server and Dockerfile, stores the `HF_TOKEN` secret, requests the GPU, waits until it serves |
+| Session start | `python -m rollout.server.space start` | Resumes the paused Space (switching to `--hardware` if it differs) and waits until `RUNNING` |
 | Any time | `python -m rollout.server.space status` | Stage, URL, estimated spend vs. budget |
 | Session end | `python -m rollout.server.space stop` | Pauses the Space. Billing stops, and only `start` (the owner) can resume it |
 
 - Hugging Face bills per minute **only while the Space is starting or running**. Building, sleeping and
   paused time are free ([docs](https://huggingface.co/docs/hub/spaces-gpus#billing)).
 - `start`/`deploy` log a session start in `~/.cache/so101-rollout/space_usage.json`, `stop` logs its end.
-  The spend estimate (`hours × $1.80`) counts start-up time too, so it errs high. `start`/`deploy` refuse
+  The spend estimate (hours × the GPU's hourly price) counts start-up time too, so it errs high. `start`/`deploy` refuse
   when less than 15 min of budget is left (`--budget` overrides).
 - Backstop: the Space also sleeps after 15 min without requests (`--sleep-time`), so a session that ends
   without `stop` stops billing on its own. A sleeping Space wakes on the next request, so use `stop`
@@ -175,7 +177,7 @@ The Space only runs while we work with it. Total spend is capped at **$20**, abo
 
 Per plan, the arm pauses for: upload (≈ 90 KB) + network round trip + server decode + model inference.
 Measured on localhost with the mock model: HTTP + JPEG decode add about 5 ms over the model's own time.
-BFL reports about 80 ms per plan on an H200 for a compiled 512×512 model. Our L40S, eager BF16, will be slower.
+BFL reports about 80 ms per plan on an H200 for a compiled 512×512 model. Our A100, eager BF16, will be slower.
 The client prints and logs every request's `total_ms` (client-measured) and the server's `inference_ms`,
 so the split between network and GPU is visible. Rough guide: with a 500 ms round trip the arm moves
 1.07 s, pauses 0.5 s, so about 68 % duty.

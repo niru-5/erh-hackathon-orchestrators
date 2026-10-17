@@ -5,7 +5,7 @@ colorFrom: gray
 colorTo: blue
 sdk: docker
 app_port: 7860
-suggested_hardware: l40sx1
+suggested_hardware: a100-large
 pinned: false
 ---
 

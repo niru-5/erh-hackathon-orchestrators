@@ -6,7 +6,7 @@
     .venv/bin/python -m rollout.server.space stop     # end of a session: pause it (billing stops)
 
 Spaces bill per minute only while Starting or Running (not while building, sleeping or paused), at
-$1.80/h for l40sx1. A paused Space restarts only through `start`, so nothing wakes it by accident;
+$2.50/h for a100-large. A paused Space restarts only through `start`, so nothing wakes it by accident;
 --sleep-time is a backstop for a session that ends without `stop`. Every start/stop goes into a local
 ledger (~/.cache/so101-rollout/space_usage.json), and `deploy`/`start` refuse once the estimated spend
 reaches --budget. The estimate counts each session from start to stop, start-up included, so it errs
@@ -150,8 +150,13 @@ def deploy(api: HfApi, args, ledger: Ledger) -> None:
 
 def start(api: HfApi, args, ledger: Ledger) -> None:
     _check_budget(ledger, args.budget, args.hardware)
-    stage = _stage(api, args.space_id)
-    if stage in STARTED_STAGES:
+    runtime = api.get_space_runtime(args.space_id)
+    stage = getattr(runtime.stage, "value", str(runtime.stage))
+    if runtime.requested_hardware != args.hardware:
+        # Changing the flavor also (re)starts the Space on it.
+        print(f"switching {args.space_id} from {runtime.requested_hardware} to {args.hardware}")
+        api.request_space_hardware(args.space_id, args.hardware, sleep_time=args.sleep_time)
+    elif stage in STARTED_STAGES:
         print(f"{args.space_id} is already {stage}")
     else:
         api.restart_space(args.space_id)
@@ -186,7 +191,9 @@ def main() -> None:
     )
     parser.add_argument("command", choices=("deploy", "start", "stop", "status"))
     parser.add_argument("--space-id", help="<user>/<name> (default: <your user>/flux3-so101-rollout)")
-    parser.add_argument("--hardware", default="l40sx1", choices=sorted(PRICES), help="GPU flavor (default l40sx1)")
+    parser.add_argument(
+        "--hardware", default="a100-large", choices=sorted(PRICES), help="GPU flavor (default a100-large)"
+    )
     parser.add_argument("--budget", type=float, default=20.0, help="max estimated total spend in $ (default 20)")
     parser.add_argument(
         "--sleep-time", type=int, default=900, help="backstop: idle seconds before it sleeps (default 900)"
