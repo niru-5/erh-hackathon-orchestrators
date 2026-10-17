@@ -654,9 +654,23 @@ summary, the second with the arm extended. **Reconnecting the follower fixed it.
   checked by eye in this session; the logs show reach, close-on-object, carry and release.
 
 **Takeaways:** step 2500 is the first FLUX policy whose logs show the whole sequence (reach, grasp, carry to d5,
-release), though split over three episodes by the stall guard and the 20 s limit. Next: one longer episode
-(`--episode-time 40`) with someone watching the board, and `--stall-gap 4.5` so a grasp or an extended arm under
-gravity isn't read as a block.
+release), though split over three episodes by the stall guard and the 20 s limit.
+
+**One 40 s episode** (23:00, `--episode-time 40 --stall-gap 4.5`, otherwise safety defaults; from rest after a manual
+reset): 910 ticks (30 s, 29 plans), 141 clamped ticks, stopped by the stall guard on shoulder_lift (gap 5°). Two
+pick attempts (c3 is at about pan −15°, d5 at about −1°):
+
+- **0–19 s:** reach to c3 in 2 s (lift −83 → +4°, elbow 86 → 31°), gripper open to 24 %, close, re-open and close
+  again, holding at 11 % vs. 8 % commanded. At about 15 s the gripper went fully closed (1 %): the piece slipped. It
+  still made the carry (pan −10 → −2°, lift +16°, elbow 15°, the d5 pose) with the gripper empty, then went back
+  toward rest.
+- **19–30 s:** re-opened to 23 %, reached c3 again (pan −17°), closed on the piece (6.4 % vs. 2.9 % commanded),
+  lowered to lift +16° but stayed at c3's pan, released, re-gripped, lifted back and opened again, until the stall
+  guard stopped it.
+
+The policy knows the sequence (reach, close, carry to d5) and retries after a miss, but the grasp didn't hold through
+the carry, and wrist_roll drifted −67 → −94°. Not checked by eye; inferred from the gripper's commanded vs. measured
+gap.
 
 ## Testing
 
