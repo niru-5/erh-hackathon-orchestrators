@@ -137,3 +137,37 @@ def test_chunk_protocol_matches_select_action_loop():
     np.testing.assert_allclose(np.stack(ours), np.stack(reference), rtol=0, atol=1e-4)
     # sanity: the model actually moves (the comparison isn't trivially between constants)
     assert np.abs(np.diff(np.stack(reference)[:, 0])).max() > 1e-3
+
+
+def test_norm_stats_override_equals_policy_built_with_them(tmp_path):
+    """--norm-stats gives the same plans as a package that shipped those quantiles."""
+    import json
+
+    ours = {
+        "state": {"q01": [-14.0, -97.0, -24.0, 56.0, -105.0, 1.0], "q99": [4.0, 39.0, 96.0, 100.0, -62.0, 36.0]},
+        "action": {"q01": [-0.8, -3.5, -2.5, -1.5, -0.8, 0.7], "q99": [0.6, 3.8, 3.8, 1.3, 0.7, 36.0]},
+    }
+    path = tmp_path / "ours.json"
+    path.write_text(json.dumps(ours))
+
+    def plan(model):
+        history = History(model.spec())
+        for obs in observations(8, seed=1):
+            history.append(obs, obs.state + 0.5 if len(history) else None)
+        return model.predict(history.window("Move the figure from c3 at 6cm to D5 at 10 cm")).actions
+
+    built = tiny_so101_policy()
+    built.config.state_normalization, built.config.action_normalization = ours["state"], ours["action"]
+    expected = plan(FluxModel(policy=built, weights="tiny"))
+    overridden = FluxModel(policy=tiny_so101_policy(), weights="tiny", norm_stats=str(path))
+    np.testing.assert_allclose(plan(overridden), expected, rtol=0, atol=1e-5)
+    assert overridden.spec().name == f"tiny+{path}"
+    # the package's own quantiles give a different plan, so the override is what made them equal
+    assert np.abs(plan(FluxModel(policy=tiny_so101_policy(), weights="tiny")) - expected).max() > 1e-3
+
+
+def test_bundled_norm_stats_load():
+    from rollout.models.flux import load_norm_stats
+
+    stats = load_norm_stats("chess_c3_d5")
+    assert stats["state"]["q01"][1] < -90 < stats["state"]["q99"][1]  # shoulder_lift in our calibration

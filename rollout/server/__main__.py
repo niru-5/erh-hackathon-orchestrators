@@ -25,6 +25,12 @@ def main() -> None:
         help="flux: Hub repo or local package (env ROLLOUT_WEIGHTS)",
     )
     parser.add_argument("--revision", default=os.environ.get("ROLLOUT_REVISION") or None, help="flux: Hub revision")
+    parser.add_argument(
+        "--norm-stats",
+        default=os.environ.get("ROLLOUT_NORM_STATS") or None,
+        help="flux: state/action quantiles to use instead of the package's: a JSON file or a name in "
+        "rollout/models/norm_stats/, e.g. chess_c3_d5 (env ROLLOUT_NORM_STATS)",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
         "--compile",
@@ -45,6 +51,7 @@ def main() -> None:
             "device": args.device,
             "compile_dit": args.compile,
             "offload_text_encoder": args.offload_text_encoder,
+            "norm_stats": args.norm_stats,
         }
         if args.weights:
             kwargs["weights"] = args.weights

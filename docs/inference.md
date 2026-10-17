@@ -27,7 +27,61 @@ From the model card, `config.json` and the reference code in
 | Hardware | NVIDIA GPU, about 32 GB for BF16 inference (BFL docs). torch 2.10 + CUDA 12.8, transformers 5.16.1, NATTEN 0.21.6 for the video VAE |
 | License | FLUX Kommunity License (gated repo, auto-approved: accept it once on the model page with the account whose token the server uses) |
 
-Our dataset already matches this contract: same camera names, same joint order and units.
+Our dataset matches this contract in camera names, joint order and units, but **not in calibration
+offsets**. Serve with `--norm-stats chess_c3_d5` (see the next section).
+
+### Calibration offsets and normalization (`--norm-stats`)
+
+The model never sees degrees. It normalizes the state and the per-tick deltas with q01/q99 quantiles,
+`x_norm = clip(2 (x - q01) / (q99 - q01) - 1, ±6)`, and it un-normalizes its output deltas the same way.
+BFL's corpus manifest ([`configs/so101/community_corpus.json`](https://github.com/black-forest-labs/flux-action/blob/830f1ce178d7aea52f18fde31d8e8e36ce6bae21/configs/so101/community_corpus.json))
+says the model was pretrained on 1016 SO-100/SO-101 community datasets, **each normalized by its own
+quantiles**. The model is therefore calibration-agnostic inside. To the model, every robot's state and motion
+fills roughly [-1, 1].
+
+The released package ships one fixed set of quantiles (`dataset_statistics.json`). They equal those of a single
+training dataset exactly: `VoicAndrei/so100_kitchen`, an SO-100 in the **old lerobot calibration**
+(807 of the 1016 training sets use it, with `main_*` joint names). Joint zeros differ a lot between that
+calibration and ours:
+
+| joint (deg) | package q01 → q99 | ours q01 → q99 | our median, normalized with the package's quantiles |
+|---|---|---|---|
+| shoulder_pan | -92 → 54 | -14 → 4 | 0.20 |
+| shoulder_lift | **85 → 184** | **-97 → 39** | **-2.84** (100 % of frames outside ±1.5) |
+| elbow_flex | **61 → 179** | **-24 → 96** | **-1.58** (53 % outside ±1.5) |
+| wrist_flex | -24 → 81 | 56 → 100 | 0.94 |
+| wrist_roll | -125 → 60 | -105 → -62 | -0.50 |
+| gripper (%) | 0.5 → 54 | 1 → 36 | -0.80 |
+
+Zero-shot with the package quantiles, the model therefore sees a shoulder and elbow pose it never trained on.
+The scales are off too. The package's delta spans are 4-5× ours on pan, wrist_flex and wrist_roll, so a typical
+predicted motion comes out 4-5× larger on those joints than in our demonstrations.
+
+The mapping that matches pretraining is to normalize with **our own** quantiles. Per joint, that is the
+affine map `x_pkg = q01_pkg + (x - q01_ours) · (q99_pkg - q01_pkg) / (q99_ours - q01_ours)`, with separate
+maps for states and for deltas. `FluxModel(norm_stats=...)` swaps the quantiles in the loaded policy, so
+the state token, the past-command deltas and the output integration all use the new maps:
+
+```bash
+# compute (already done, committed as rollout/models/norm_stats/chess_c3_d5.json)
+.venv/bin/python scripts/flux_norm_stats.py niru-5/chess_dataset_c3_6cm_to_d5_10cm_20261017_145741 \
+  --exclude-episodes 0,1 -o rollout/models/norm_stats/chess_c3_d5.json
+# serve with it
+python -m rollout.server --model flux --norm-stats chess_c3_d5                 # GPU box
+.venv/bin/python -m rollout.server.space deploy --norm-stats chess_c3_d5       # Space (env ROLLOUT_NORM_STATS)
+.venv/bin/python -m rollout run --policy local:flux --norm-stats chess_c3_d5 ...
+```
+
+Episodes 0 and 1 are left out of the stats because their wrist_roll goes up to +67° (median +44° in
+episode 0, -90…-60° elsewhere). That would make the roll span about 7× wider.
+
+Caveats:
+- Quantiles fix offsets and scales, not **signs**. If one of our joints turns the opposite way from the
+  pretraining data, quantiles can't detect it. Both calibrations seem to share the main directions, but this
+  isn't verified. If a joint moves the wrong way in the open-loop check, negate it on both sides.
+- These quantiles come from one narrow task (pan only spans 18°). Pretraining sets were usually single-task
+  too, but a much wider task on this rig needs quantiles recomputed from data that covers it.
+- The gripper is absolute in FLUX's action space. Its span (0-54 % vs. our 1-36 %) is rescaled too.
 
 ### Why one request per plan is enough
 

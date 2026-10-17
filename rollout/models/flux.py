@@ -4,14 +4,34 @@ Needs a CUDA GPU with about 32 GB and the flux-action environment (torch 2.10 + 
 NATTEN), see rollout/server/Dockerfile. Only imported when a flux model is requested.
 """
 
+import json
+import logging
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
 
 from ..contract import ACTION_NAMES, Plan, PolicySpec, Window
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_WEIGHTS = "black-forest-labs/flux-3-action-so101"
+NORM_STATS_DIR = Path(__file__).parent / "norm_stats"
+
+
+def load_norm_stats(name_or_path: str) -> dict:
+    """``{"state": {"q01", "q99"}, "action": {"q01", "q99"}}`` from a JSON file, or a name in models/norm_stats/
+    (made by scripts/flux_norm_stats.py)."""
+    path = Path(name_or_path)
+    if not path.exists():
+        path = NORM_STATS_DIR / f"{name_or_path.removesuffix('.json')}.json"
+    stats = json.loads(path.read_text())
+    for stream in ("state", "action"):
+        for q in ("q01", "q99"):
+            if len(stats[stream][q]) != len(ACTION_NAMES):
+                raise ValueError(f"{path}: {stream}.{q} needs {len(ACTION_NAMES)} values")
+    return stats
 
 
 class FluxModel:
@@ -23,8 +43,12 @@ class FluxModel:
         device: str = "cuda",
         compile_dit: bool = False,
         offload_text_encoder: bool = False,
+        norm_stats: str | None = None,
         policy=None,  # an already loaded FluxActionPolicy (tests)
     ):
+        """``norm_stats`` replaces the package's state/action quantiles. The package ships those of one
+        pretraining dataset (VoicAndrei/so100_kitchen, old lerobot calibration); pretraining normalized every
+        dataset by its own, so a robot's own quantiles put its state where the model expects it."""
         from flux_action.processing.history import snapshot_indices
 
         if policy is None:
@@ -37,12 +61,18 @@ class FluxModel:
             )
         self.policy = policy
         cfg = policy.config
+        if norm_stats:
+            stats = load_norm_stats(norm_stats)
+            # read on every call by the state token, the past-command deltas and the output integration
+            cfg.state_normalization = {q: list(stats["state"][q]) for q in ("q01", "q99")}
+            cfg.action_normalization = {q: list(stats["action"][q]) for q in ("q01", "q99")}
+            logger.info("normalization quantiles from %s", norm_stats)
         if cfg.inference_profile != "history" or cfg.camera_layout != "side_by_side":
             raise ValueError("FluxModel supports the SO-101 history package (side_by_side cameras)")
         canvas_h, canvas_w = cfg.canvas_hw
         self._keys = tuple(cfg.camera_keys)  # "images.scene", "images.wrist"
         self._spec = PolicySpec(
-            name=weights if isinstance(weights, str) else "flux",
+            name=(weights if isinstance(weights, str) else "flux") + (f"+{norm_stats}" if norm_stats else ""),
             camera_keys=tuple(key.removeprefix("images.") for key in self._keys),
             n_obs_steps=cfg.n_obs_steps,
             snapshot_indices=tuple(snapshot_indices(cfg)),

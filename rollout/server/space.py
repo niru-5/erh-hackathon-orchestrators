@@ -36,6 +36,7 @@ FILES = [
     "models/__init__.py",
     "models/flux.py",
     "models/hold.py",
+    *sorted(f"models/norm_stats/{f.name}" for f in (ROLLOUT / "models/norm_stats").glob("*.json")),
     "server/__init__.py",
     "server/__main__.py",
     "server/app.py",
@@ -139,7 +140,12 @@ def deploy(api: HfApi, args, ledger: Ledger) -> None:
     ]
     api.create_commit(args.space_id, operations, repo_type="space", commit_message="Deploy rollout model server")
     api.add_space_secret(args.space_id, "HF_TOKEN", token, description="read access to the gated policy")
-    for key, value in (("ROLLOUT_WEIGHTS", args.weights), ("ROLLOUT_REVISION", args.revision)):
+    variables = (
+        ("ROLLOUT_WEIGHTS", args.weights),
+        ("ROLLOUT_REVISION", args.revision),
+        ("ROLLOUT_NORM_STATS", args.norm_stats),
+    )
+    for key, value in variables:
         if value:
             api.add_space_variable(args.space_id, key, value)
     api.request_space_hardware(args.space_id, args.hardware, sleep_time=args.sleep_time)
@@ -193,6 +199,9 @@ def main() -> None:
     )
     parser.add_argument("--weights", help="deploy: policy repo (default black-forest-labs/flux-3-action-so101)")
     parser.add_argument("--revision", help="deploy: pin the policy's Hub revision")
+    parser.add_argument(
+        "--norm-stats", help="deploy: quantiles name in rollout/models/norm_stats/ to serve with (e.g. chess_c3_d5)"
+    )
     parser.add_argument("--no-wait", action="store_true", help="deploy/start: return without waiting for RUNNING")
     parser.add_argument("--wait-timeout", type=float, default=2400, help="seconds to wait for RUNNING (default 2400)")
     args = parser.parse_args()
