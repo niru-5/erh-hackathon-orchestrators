@@ -17,7 +17,8 @@ Required:
   --episodes N            Number of episodes to record (dataset.num_episodes)
 
 Options:
-  --repo-id USER/NAME     Dataset id (default: <hf_user>/so101_<YYYYmmdd_HHMMSS>)
+  --repo-id USER/NAME     Dataset id; lerobot appends _<YYYYmmdd_HHMMSS> to new datasets
+                          (default: <hf_user>/so101 -> <hf_user>/so101_<YYYYmmdd_HHMMSS>)
   --root DIR              Local dataset dir (default: ~/.cache/huggingface/lerobot/<repo-id>)
   --episode-time SEC      Max seconds per episode (default: 60)
   --reset-time SEC        Seconds to reset the scene between episodes (default: 30)
@@ -94,9 +95,12 @@ LEROBOT_RECORD="${LEROBOT_RECORD:-$(command -v lerobot-record || true)}"
 [[ -n "$LEROBOT_RECORD" ]] || { echo "error: lerobot-record not found (see docs/data_collection.md)" >&2; exit 1; }
 HF_CLI="$(dirname "$LEROBOT_RECORD")/hf"
 
+# lerobot-record appends _<YYYYmmdd_HHMMSS> to the repo id of every new dataset (not on --resume).
 if [[ -z "$REPO_ID" ]]; then
-  HF_USER="$("$HF_CLI" auth whoami 2>/dev/null | sed -n 's/^user=//p' | head -1 || true)"
-  REPO_ID="${HF_USER:-local}/so101_$(date +%Y%m%d_%H%M%S)"
+  HF_USER="$("$HF_CLI" auth whoami --format json 2>/dev/null \
+    | "$(dirname "$LEROBOT_RECORD")/python" -c 'import json,sys; print(json.load(sys.stdin).get("user") or "")' 2>/dev/null || true)"
+  [[ -n "$HF_USER" ]] || echo "warning: not logged in to Hugging Face, saving under local/ (run: .venv/bin/hf auth login)" >&2
+  REPO_ID="${HF_USER:-local}/so101"
 fi
 
 # Sanity-check hardware before starting.
@@ -130,7 +134,7 @@ ARGS=(
 )
 [[ -n "$ROOT" ]] && ARGS+=(--dataset.root="$ROOT")
 
-echo "Recording $EPISODES episode(s) -> $REPO_ID"
+if [[ "$RESUME" == true ]]; then echo "Appending $EPISODES episode(s) -> $REPO_ID"; else echo "Recording $EPISODES episode(s) -> ${REPO_ID}_<timestamp> (lerobot adds the timestamp)"; fi
 echo "Task: $TASK"
 if [[ "$DRY_RUN" == true ]]; then
   printf '%q ' "$LEROBOT_RECORD" "${ARGS[@]}" "${EXTRA_ARGS[@]}"; echo

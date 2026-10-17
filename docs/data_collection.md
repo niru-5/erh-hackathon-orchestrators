@@ -19,8 +19,37 @@ scripts/record_so101.sh --task "Pick up the red cube and place it in the bowl" -
   for different tasks.
 - `--episodes` is how many episodes to record (`dataset.num_episodes`).
 
-The dataset is saved locally to `~/.cache/huggingface/lerobot/<repo-id>`. The default repo id is
-`<hf_user>/so101_<YYYYmmdd_HHMMSS>`; the script prints it when it starts.
+The dataset is saved locally to `~/.cache/huggingface/lerobot/<repo-id>`. `lerobot-record` appends
+a `_<YYYYmmdd_HHMMSS>` timestamp to the repo id of every **new** dataset, so the default
+`<hf_user>/so101` becomes e.g. `niru-5/so101_20261017_130512`. The final id is in the log
+(`repo_id=...`) and is the folder name. If you're not logged in to Hugging Face, `<hf_user>` is `local`.
+
+## Workflow
+
+```
+ leader arm ──(you move it)──► lerobot-record ──► follower arm mirrors it
+                                     │  every frame @30 fps:
+                                     │   action            = leader joint positions (6)
+                                     │   observation.state = follower joint positions (6)
+                                     │   observation.images.{left_side,right_side,ff}
+                                     │   task              = --task prompt
+                                     ▼
+          ~/.cache/huggingface/lerobot/<hf_user>/so101_<timestamp>/   (LeRobotDataset v3.0)
+                                     │
+                                     ▼  (optional) --push, or scripts/push_dataset.py later
+              https://huggingface.co/datasets/<hf_user>/so101_<timestamp>
+```
+
+1. **Check** (optional): `scripts/check_cameras.py` / `scripts/check_calibration.py`, see
+   [Pre-recording checks](#pre-recording-checks).
+2. **Record**: `scripts/record_so101.sh --task "<prompt>" --episodes N`. Each episode is
+   *record* (up to `--episode-time`) → *reset* (up to `--reset-time`, nothing saved) → next.
+   Videos are encoded on the fly (`streaming_encoding`). Each finished episode is saved, and the
+   dataset files are finalized on exit. Esc stops cleanly; Ctrl+C also finalizes but drops the
+   episode in progress.
+3. **Inspect**: the load snippet in [Dataset layout](#dataset-layout-v30) or `lerobot-dataset-viz`.
+4. **Add more** (optional): rerun with `--repo-id <full timestamped id> --resume`.
+5. **Push**: see [Pushing to the Hugging Face Hub](#pushing-to-the-hugging-face-hub).
 
 ### All options
 
@@ -28,13 +57,13 @@ The dataset is saved locally to `~/.cache/huggingface/lerobot/<repo-id>`. The de
 |---|---|---|
 | `--task "<prompt>"` | required | Task / language instruction |
 | `--episodes N` | required | Number of episodes |
-| `--repo-id USER/NAME` | `<hf_user>/so101_<timestamp>` | Dataset id |
+| `--repo-id USER/NAME` | `<hf_user>/so101` | Dataset id (lerobot appends `_<timestamp>` to new datasets) |
 | `--root DIR` | `~/.cache/huggingface/lerobot/<repo-id>` | Local output dir |
 | `--episode-time SEC` | 60 | Max length of an episode |
 | `--reset-time SEC` | 30 | Time to reset the scene between episodes |
 | `--fps N` | 30 | Recording / camera fps |
 | `--push` | off | Upload to the Hugging Face Hub when done |
-| `--resume` | off | Append to an existing dataset (needs `--repo-id`) |
+| `--resume` | off | Append to an existing dataset (needs its full timestamped `--repo-id`) |
 | `--no-display` | display on | Disable the Rerun live viewer |
 | `--dry-run` | | Print the full `lerobot-record` command and exit |
 | `-- <args>` | | Extra args passed straight to `lerobot-record` |
@@ -42,14 +71,34 @@ The dataset is saved locally to `~/.cache/huggingface/lerobot/<repo-id>`. The de
 Examples:
 
 ```bash
-# 20 episodes, pushed to the Hub under a fixed name
+# 20 episodes, pushed to the Hub when done -> niru-5/so101_stack_blocks_<timestamp>
 scripts/record_so101.sh --task "Stack the blue block on the red block" --episodes 20 \
   --repo-id niru-5/so101_stack_blocks --push
 
-# add 10 more episodes to that dataset later
+# add 10 more episodes to that dataset later: use the full id, timestamp included
 scripts/record_so101.sh --task "Stack the blue block on the red block" --episodes 10 \
-  --repo-id niru-5/so101_stack_blocks --resume
+  --repo-id niru-5/so101_stack_blocks_20261017_130512 --resume
 ```
+
+## Pushing to the Hugging Face Hub
+
+Datasets stay local unless you push them. Two options (both need `.venv/bin/hf auth login`):
+
+- **While recording**: add `--push`. The dataset is uploaded when recording finishes.
+- **After recording** (recommended: inspect first, then push):
+
+  ```bash
+  # push under the same id
+  .venv/bin/python scripts/push_dataset.py niru-5/so101_20261017_130512
+  # push under a different name (also how to push a dataset saved under local/)
+  .venv/bin/python scripts/push_dataset.py local/so101_20261017_124726 --hub-id niru-5/so101_cube_test
+  # add --private for a private Hub repo
+  ```
+
+`push_dataset.py` uses lerobot's own `LeRobotDataset.push_to_hub()`. It uploads `meta/`, `data/` and
+`videos/`, writes a dataset card and tags the repo with the codebase version (`v3.0`). Anyone can then
+load it with `LeRobotDataset("<hf_user>/<name>")` or train on it with `lerobot-train --dataset.repo_id=<hf_user>/<name>`.
+Pushing again after `--resume` updates the same Hub repo.
 
 ## Keyboard controls during recording
 
@@ -62,8 +111,7 @@ scripts/record_so101.sh --task "Stack the blue block on the red block" --episode
 The laptop runs **Wayland**, so lerobot reads these keys from the **terminal** that runs the script,
 not globally. Keep that terminal focused when you press them (not the Rerun window).
 
-Flow per episode: *record* (up to `--episode-time`) → *reset* (up to `--reset-time`, not recorded)
-→ next episode. No reset period follows the last episode.
+No reset period follows the last episode.
 
 ## Rig configuration
 
