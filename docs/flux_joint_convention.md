@@ -252,6 +252,61 @@ structure of a pick (turn toward the piece, open, close once). But with the wron
 folded instead of raised), and with no carry or place. A fine-tune with our normalization (section 7.3) is the
 next step for FLUX; ACT already does the full episode.
 
+## 9. Zero-shot with median community statistics (23:05)
+
+The MuJoCo demo Space [`multimodalart/flux-3-action-so101-sim`](https://huggingface.co/spaces/multimodalart/flux-3-action-so101-sim/commit/09edebb006d793cb215ce8c0fccfc9eacd71dfc6)
+("Normalize with median new-calibration SO-101 dataset stats") overrides `policy.config.state_normalization` /
+`action_normalization` with one fixed set: the median of new-calibration SO-101 datasets. That's the same hook as
+our `--normalization`, so it plugs in unchanged: [`scripts/flux_convention/median_norm.json`](../scripts/flux_convention/median_norm.json).
+
+**Does it fit our data?** Same convention as ours. Our frames normalized with each set (rest = mean of frame 0):
+
+| | pan | lift | elbow | wflex | wroll | grip |
+|---|---|---|---|---|---|---|
+| Rest pose, our stats | +0.48 | −0.93 | +0.94 | −0.16 | −0.64 | −0.85 |
+| Rest pose, median stats | +0.01 | −0.91 | +1.04 | +0.40 | **−1.21** | −0.85 |
+| Our frames outside ±1, median stats | 0 % | 0 % | 20 % | 6 % | **85 %** | 0 % |
+| Degrees per unit of predicted delta, ours / median | 0.70 / 1.68 | 3.65 / 3.36 | 3.12 / 3.23 | 1.41 / 2.13 | 0.88 / 1.70 | |
+
+Lift, elbow and gripper look the same as with our stats. Our pan workspace becomes a narrow band (−0.36…0.14) and
+pan/wrist moves are de-normalized about 2× larger. wrist_roll is the mismatch: our rest is ≈ −78°, the community's ≈ 0°.
+
+```bash
+.venv/bin/python -m rollout.server.space deploy --no-adapter --normalization scripts/flux_convention/median_norm.json \
+  --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849
+```
+
+**Offline, teacher-forced, episodes 25 and 30** (`rollout_logs/eval_mediannorm`, `eval_hold_25_30`), mean error, degrees (gripper %):
+
+| Policy | pan | lift | elbow | wflex | wroll | **arm** | gripper |
+|---|---|---|---|---|---|---|---|
+| FLUX base, median stats | 5.59 | 10.50 | 8.83 | 7.57 | 4.17 | **7.33** | 3.48 |
+| FLUX base, our stats (section 7.1, ep 24–30) | 3.03 | 12.39 | 11.90 | 4.85 | 1.61 | **6.76** | 2.84 |
+| Hold | 1.43 | 7.92 | 5.98 | 3.70 | 0.81 | **3.97** | 1.78 |
+
+Moving windows (14): right direction 47 %, median coverage 0.01, arm error 9.78 vs. hold 7.12. Like our stats: chance.
+
+**Dry run** (`20261017_230748`): stopped at tick 119 by the runaway abort (elbow −64°). The commands reach out
+faster than with our stats (lift −96 → −21°, elbow 93 → −39° by 3.6 s; pan to −18°), wrist_roll −92 → −18°, gripper closed.
+
+**On the real arm** (`20261017_230816`, 20 s, safety defaults, piece on c3): 600 ticks, 19 plans, no safety stop,
+the arm within 5.5° of every goal. 344 ticks clamped (pan asking down to −33°, elbow up to 103° at rest).
+
+| Time | Joints (state) | Reading |
+|---|---|---|
+| 0–2.4 s | pan −5 → −14°, lift −96 → −74°, elbow 93 → 67° | heads toward c3 |
+| 3.2–5.6 s | gripper 2 → 36 %, elbow down to 10°, lift −66° | reaches with the elbow, shoulder low |
+| 8.8–9.6 s | **gripper 34 → 1 %** at pan −17°, then pan to +8° | closes (on nothing: the demos' grasp holds ≈ 5 %), swings sideways |
+| 12–15 s | lift −96°, elbow 96° | back to rest |
+| 16–19 s | pan +8° (commanded +18°), lift −57° | second reach, gripper closed, back to rest |
+
+wrist_roll drifted −92 → +12° (toward the community rest ≈ 0°), more than with our stats.
+
+**Reading:** the median stats are a valid alternative (same convention, same lift/elbow/gripper view) and slightly
+livelier on the arm: further elbow extension (10° vs. 20°), a pick-then-move shape. But the shoulder still never
+rises (max −52°; the demos grasp at about +6°), the gripper closes empty, and wrist_roll drifts further. Not better
+than our own stats in any measurable way; the capability gap of section 7.3 remains.
+
 ## Safety fixes (done)
 
 After the step-500 run, three fixes in `rollout/loop.py` (details in `docs/inference.md`, section Safety):
