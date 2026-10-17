@@ -271,11 +271,10 @@ off by 63° (lift) and 67° (roll). The base model's normalization quantiles
 | wrist_roll | −124.5 … 60.2 | −85.3 … −65.5 |
 | gripper | 0.5 … 53.6 | 2.1 … 22.7 |
 
-Our calibration (lerobot 0.6.0, `use_degrees=true`) puts 0° at the middle of each joint's calibrated range.
-The SO-101 episodes in `lerobot/community_dataset_v3` that the model learned from use other zeros:
-shoulder_lift looks like ours + ~180°, and elbow_flex and the wrist joints are shifted too, possibly with a
-flipped sign. Fed our raw state, the zero-shot base model sees arm poses it rarely saw. A fine-tune on our
-data (next section) learns our convention directly, so no mapping is needed for it.
+*Correction (later the same day):* this isn't a calibration offset in the community data. Those datasets use
+our convention. BFL normalized every training dataset with its own range, and the checkpoint ships one fixed,
+MolmoAct-style range that our values fall far outside. The fix is to normalize with our dataset's own
+quantiles (`--normalization`). The full analysis is in [flux_joint_convention.md](flux_joint_convention.md).
 
 ## Fine-tuned LoRA: `Gawtam/flux3-chess-lora` (2026-10-17)
 
@@ -320,6 +319,24 @@ margin, and the 5°/tick cap above. Likely causes of the bad motion:
 Before the next motion run: the new safety defaults, the arm power-cycled, a dry run first, and, to fix
 the pauses, either faster inference (`ROLLOUT_COMPILE=1`, a faster GPU) or overlapping the next request
 with execution (see [Next steps](#next-steps)).
+
+**Step 500** (`--adapter-revision 1fd9e7f92eb3b61483da138caa78dd1114a6ec3e`, the card reports 6.72° arm / 4.24 %
+gripper on held-out episodes 24–30, vs. 8.80° / 4.56 % for step 250). On the real arm (17:43, safety defaults:
+demo-range limits with no margin, 5°/tick, stall guard; no dry run):
+
+- 0–7 s: lifted out of rest and swung toward the board, smoothly over the first plans.
+- From about 7 s the **commands ran away**: shoulder_lift commanded 104°, 181°, … up to 844°, elbow up to 374°,
+  while the limits held the arm at about 39° lift. FLUX chains each plan onto **its own previous commands**
+  (the history records the unclamped command). Once the arm stopped following, every new history was more
+  inconsistent, the same failure as free-running dataset replay.
+- From about 10 s the elbow sat about 5° from its goal and barely moved: pressing on something. At 30 s the
+  servos stopped answering again (overload protection; power cycle needed).
+- **The stall guard couldn't trip.** It needs a gap above 6°, but the 5°/tick cap keeps every goal within
+  about 5° of the arm. This bug in my defaults is still open, together with: abort when commands go far outside
+  the limits (instead of clamping), and record the clamped goal in the history.
+
+That run used the checkpoint's normalization. The zero-shot base model's mismatch is analysed in
+[flux_joint_convention.md](flux_joint_convention.md).
 
 ## ACT, fully local: `rtrtwrw/act_chess_c3_to_d5` (2026-10-17)
 
