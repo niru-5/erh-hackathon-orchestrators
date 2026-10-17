@@ -1,5 +1,6 @@
 """Server + RemoteBackend over real HTTP, and the control loop, with the mock model (no GPU, no robot)."""
 
+import json
 import socket
 import threading
 import time
@@ -122,15 +123,40 @@ def test_loop_replans_every_32_ticks_and_chains_commands(tmp_path):
     assert len((tmp_path / "run/plans.jsonl").read_text().splitlines()) == 3
 
 
-def test_limits_clip_goals_but_not_the_command_chain(tmp_path):
+def test_limits_clip_goals_and_the_history_records_the_clipped_goal(tmp_path):
+    """The next plan starts from what the arm was told (10), not from the raw command chain (32)."""
     robot = FakeRobot(ticks=40)
     backend = LocalBackend(RampModel())
     spec = backend.spec()
     limits = JointLimits(np.full(6, -100.0), np.array([10.0, 100, 100, 100, 100, 100]))
+    log = RunLog(tmp_path / "run")
     robot.start_episode(0)
-    stats = run_episode(robot, backend, spec, History(spec), task="t", episode=0, max_ticks=40, limits=limits)
+    stats = run_episode(robot, backend, spec, History(spec), task="t", episode=0, max_ticks=40, limits=limits, log=log)
+    log.close()
     sent = np.stack(robot.sent)[:, 0]
     assert sent.max() == 10.0 and stats.clipped_ticks == 30
+    commands = [json.loads(line)["command"][0] for line in (tmp_path / "run/ticks.jsonl").read_text().splitlines()]
+    assert commands[31] == 32 and commands[32] == 11  # plan 2 continues from the clipped goal
+
+
+def test_runaway_command_stops_the_episode_and_holds():
+    robot = FakeRobot(ticks=100)
+    backend = LocalBackend(RampModel())
+    spec = backend.spec()
+    limits = JointLimits(np.full(6, -100.0), np.array([10.0, 100, 100, 100, 100, 100]), abort_margin=5)
+    robot.start_episode(0)
+    stats = run_episode(robot, backend, spec, History(spec), task="t", episode=0, max_ticks=100, limits=limits)
+    assert stats.stopped_by.startswith("runaway: shoulder_pan.pos commanded 16")
+    assert stats.ticks == 15  # commands 1..15 sent (clamped at 10 from 11), 16 is > 10 + 5
+    np.testing.assert_allclose(robot.sent[-1], robot.state)  # last goal: hold
+
+
+def test_default_stall_guard_trips_under_the_default_per_tick_cap():
+    """Step-500 run: goal held ~5 degrees ahead (the 5 degree cap) of a joint that doesn't move."""
+    guard = StallGuard()
+    state = np.zeros(6, np.float32)
+    hits = [guard.update(state, state + np.array([0, 0, 5, 0, 0, 0], np.float32)) for _ in range(12)]
+    assert hits[-1] is not None and hits[-1].startswith("elbow_flex.pos")
 
 
 def test_joint_limits_from_dataset_stats(tmp_path):
@@ -211,3 +237,17 @@ def test_stall_guard_ignores_lag_while_moving():
     for _ in range(50):  # the arm trails the goal by 12 degrees but keeps moving 3 degrees per tick
         goal = goal + np.array([0, 3, 0, 0, 0, 0], np.float32)
         assert guard.update(goal - np.array([0, 12, 0, 0, 0, 0], np.float32), goal) is None
+
+
+def test_stall_guard_ignores_the_folded_arm_at_rest_but_not_mid_range():
+    """ACT run: at rest the goal (-103) is below where the arm can go (-97, edge of the demos' reach)."""
+    limits = JointLimits(
+        np.full(6, -110.0), np.full(6, 110.0), reach_low=np.full(6, -97.0), reach_high=np.full(6, 100.0)
+    )
+    state, goal = np.full(6, -96.9, np.float32), np.full(6, -102.0, np.float32)
+    guard = StallGuard()
+    assert all(guard.update(state, goal, limits.beyond_reach(goal)) is None for _ in range(30))
+    mid, push = np.zeros(6, np.float32), np.full(6, 5.0, np.float32)  # blocked mid-range (table)
+    guard = StallGuard()
+    hits = [guard.update(mid, push, limits.beyond_reach(push)) for _ in range(12)]
+    assert hits[-1] is not None

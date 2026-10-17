@@ -67,7 +67,18 @@ def parse_args(argv=None) -> argparse.Namespace:
         default=True,
         help="so101: stop the episode when a joint is blocked (far from its goal and not moving) (default on)",
     )
-    safety.add_argument("--stall-gap", type=float, default=6.0, help="stall guard: goal gap in degrees (default 6)")
+    safety.add_argument(
+        "--stall-gap",
+        type=float,
+        default=3.0,
+        help="stall guard: goal gap in degrees; must be below --max-relative-target (default 3)",
+    )
+    safety.add_argument(
+        "--abort-margin",
+        type=float,
+        default=30.0,
+        help="stop the episode when a command is this many degrees outside the joint limits (default 30; 0 = off)",
+    )
     transport = run.add_argument_group("transport (remote policy)")
     transport.add_argument("--jpeg-quality", type=int, default=90)
     transport.add_argument(
@@ -175,7 +186,19 @@ def main(argv=None) -> int:
             args.task = str(LeRobotDatasetMetadata(args.dataset, root=args.dataset_root).tasks.index[0])
 
     use_limits = args.robot == "so101" and args.limits_from and args.limits_from.lower() != "none"
-    limits = JointLimits.from_dataset(args.limits_from, args.limit_margin) if use_limits else None
+    limits = (
+        JointLimits.from_dataset(args.limits_from, args.limit_margin, args.abort_margin or None) if use_limits else None
+    )
+    if (
+        args.robot == "so101"
+        and args.stall_guard
+        and args.max_relative_target
+        and args.stall_gap >= args.max_relative_target
+    ):
+        raise SystemExit(
+            f"--stall-gap ({args.stall_gap}) must be below --max-relative-target ({args.max_relative_target}): "
+            "lerobot never lets the goal get further than that from the arm, so the guard could never trip"
+        )
     if limits:
         logger.info("joint limits: %s", limits.describe())
     log = RunLog(args.log_dir / datetime.now().strftime("%Y%m%d_%H%M%S"))
