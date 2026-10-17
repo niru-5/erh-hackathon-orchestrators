@@ -140,7 +140,7 @@ be older than the model expects. That's a possible next step (see [Next steps](#
 
 | Target | How | Notes |
 |---|---|---|
-| **Hugging Face Space (Docker, GPU)** | `python -m rollout.server.deploy_space` creates a private Docker Space from `rollout/server/Dockerfile` on an `l40sx1` (48 GB) GPU | Paid per hour while running; the Space sleeps after `--sleep-time` (default 1 h) idle. Needs secret `HF_TOKEN` with access to the gated model |
+| **Hugging Face Space (Docker, GPU)** | `python -m rollout.server.space deploy` creates a private Docker Space from `rollout/server/Dockerfile` on an `l40sx1` (48 GB) GPU | $1.80/h while starting or running, run only during sessions (see [Sessions and budget](#sessions-and-budget)). Needs secret `HF_TOKEN` with access to the gated model |
 | Any GPU box | `docker build -f rollout/server/Dockerfile .` and run it, or `python -m rollout.server --model flux` in a flux-action environment | Point the client at `http://<host>:7860` |
 | In-process | `--policy local:flux` | Only on a machine with a ≥ 32 GB GPU |
 | Mock | `--policy local:hold`, or a server started with `--model hold` | No GPU. Tests the robot loop, the HTTP path and timing |
@@ -148,6 +148,28 @@ be older than the model expects. That's a possible next step (see [Next steps](#
 An HF Inference Endpoint with a custom container works too: it is the same Docker image (port 7860).
 "Inference Providers" (the serverless API) don't serve this model, and ZeroGPU Spaces don't fit
 a 30 Hz control loop (the GPU is allocated per call, with queueing).
+
+### Sessions and budget
+
+The Space only runs while we work with it. Total spend is capped at **$20**, about 11 h of L40S.
+
+| When | Command | Effect |
+|---|---|---|
+| Once | `python -m rollout.server.space deploy` | Creates the private Space `niru-5/flux3-so101-rollout`, uploads the server and Dockerfile, stores the `HF_TOKEN` secret, requests `l40sx1`, waits until it serves |
+| Session start | `python -m rollout.server.space start` | Resumes the paused Space and waits until `RUNNING` |
+| Any time | `python -m rollout.server.space status` | Stage, URL, estimated spend vs. budget |
+| Session end | `python -m rollout.server.space stop` | Pauses the Space. Billing stops, and only `start` (the owner) can resume it |
+
+- Hugging Face bills per minute **only while the Space is starting or running**. Building, sleeping and
+  paused time are free ([docs](https://huggingface.co/docs/hub/spaces-gpus#billing)).
+- `start`/`deploy` log a session start in `~/.cache/so101-rollout/space_usage.json`, `stop` logs its end.
+  The spend estimate (`hours × $1.80`) counts start-up time too, so it errs high. `start`/`deploy` refuse
+  when less than 15 min of budget is left (`--budget` overrides).
+- Backstop: the Space also sleeps after 15 min without requests (`--sleep-time`), so a session that ends
+  without `stop` stops billing on its own. A sleeping Space wakes on the next request, so use `stop`
+  (pause), which can't be woken by accident.
+- Each start downloads the weights again (≈ 25 GB: policy + text encoder + video VAE). That's billed
+  start-up time, a few minutes per session.
 
 ### Latency budget
 
@@ -185,8 +207,10 @@ All commands run from the repo root with the lerobot venv (`.venv`).
 .venv/bin/python -m rollout.server --model hold --port 7860 &
 .venv/bin/python -m rollout run --robot dataset --policy http://localhost:7860 --episode 0
 
-# 3. deploy the real model to a private GPU Space (paid; see the command's --help)
-.venv/bin/python -m rollout.server.deploy_space --space-id niru-5/flux3-so101-rollout
+# 3. deploy the real model to a private GPU Space once (paid), then start/stop it per session
+.venv/bin/python -m rollout.server.space deploy
+.venv/bin/python -m rollout.server.space start    # session start
+.venv/bin/python -m rollout.server.space stop     # session end
 
 # 4. open-loop check of FLUX on a recorded episode: predicted vs. recorded actions
 .venv/bin/python -m rollout run --robot dataset --policy https://niru-5-flux3-so101-rollout.hf.space \
@@ -243,7 +267,7 @@ rollout/
 ├── backends/               # local.py (in-process), remote.py (HTTP)
 ├── models/                 # flux.py (FLUX 3 Action), hold.py (mock)
 ├── robots/                 # so101.py (lerobot follower + cameras), dataset.py (replay)
-├── server/                 # app.py (FastAPI), Dockerfile, requirements.txt, deploy_space.py
+├── server/                 # app.py (FastAPI), Dockerfile, requirements.txt, space.py (deploy/start/stop)
 └── tests/                  # history/codec/server/loop tests, flux equivalence test
 ```
 
