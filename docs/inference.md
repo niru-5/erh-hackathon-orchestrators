@@ -321,6 +321,39 @@ Before the next motion run: the new safety defaults, the arm power-cycled, a dry
 the pauses, either faster inference (`ROLLOUT_COMPILE=1`, a faster GPU) or overlapping the next request
 with execution (see [Next steps](#next-steps)).
 
+## ACT, fully local: `rtrtwrw/act_chess_c3_to_d5` (2026-10-17)
+
+An ACT policy (51.6M params, resnet18) trained from scratch with LeRobot 0.5.1 on **all 31 episodes** of
+our main dataset (intermediate checkpoint, step 12,000 of 22,000). It uses all three cameras at 480×640 and
+predicts 100 absolute joint targets per plan, all executed (3.3 s) before replanning. It's small enough for
+this laptop's CPU, so the whole loop runs here with no Space and no network:
+
+```bash
+.venv/bin/python -m rollout run --robot so101 --policy local:lerobot --weights rtrtwrw/act_chess_c3_to_d5 \
+  --revision a7485336a65e20396474d7d046305f69de5cd256 --task "Move the figure from c3 at 6cm to D5 at 10 cm" --episode-time 20
+```
+
+`local:lerobot` (`rollout/models/lerobot_policy.py`) loads any LeRobot single-observation chunk policy with
+its saved processors; the contract (cameras, resolution, chunk) comes from the checkpoint's config.
+
+| | ACT on the laptop CPU | FLUX + LoRA on the A100 Space |
+|---|---|---|
+| Time per plan | 0.40–0.50 s | 1.5 s (1.07 s inference + network) |
+| Motion per plan | 100 actions = 3.3 s | 32 actions = 1.07 s |
+| Share of time moving | ≈ 88 % | ≈ 40 % |
+| Cost | none | $2.50/h while running |
+
+Offline (dataset replay), mean error vs. recorded actions on episodes 0 / 25 / 30: pan 0.6 / 1.3 / 0.8°,
+lift 4.1 / 7.0 / 3.6°, elbow 2.5 / 4.2 / 2.5°, wrist_flex 1.9 / 2.6 / 2.4°, wrist_roll 7.3 / 1.0 / 0.9°,
+gripper 1.1 / 2.6 / 1.3 %. These episodes were in its training set, so this measures fit, not generalization.
+
+**On the real arm** (17:32, one 20 s episode with the safety defaults): the full motion sequence, with no
+stall and no bus error. It held the rest pose for 1.8 s, reached toward c3 (pan −15°, lift −97 → 6°,
+elbow 93 → 26°, gripper opened to 21 %) by 4.9 s, closed the gripper (20 → 5.5 %) at 6–8 s, carried with a
+longer reach (lift 25°, elbow 1°) to 12 s, opened the gripper (14.6 %) at 12.5 s, and was back at rest by
+17 s. Tracking stayed within the 5°/tick cap. 137 ticks were clamped, mostly at rest, where ACT asks to
+press slightly below the demo minimum. Whether the piece landed on d5 was checked by eye, not logged.
+
 ## Testing
 
 ```bash
