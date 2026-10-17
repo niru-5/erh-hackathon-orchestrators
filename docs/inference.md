@@ -350,6 +350,62 @@ demo-range limits with no margin, 5°/tick, stall guard; no dry run):
 That run used the checkpoint's normalization. The zero-shot base model's mismatch is analysed in
 [flux_joint_convention.md](flux_joint_convention.md).
 
+### Step 2500, the end of training (2026-10-17, 21:33)
+
+The repo root is now **step 2500, EMA** (revision `3708f80`, 2500 steps at batch 8 on 1 × H100, the checkpoint's
+normalization). The card reports 2.73° arm / 2.83 % gripper on held-out episodes 24–30 (step 500: 6.72°, base
+12.49°, "hold the last command" 4.05°), and on moving windows 3.79° error, 90 % right direction, median coverage
+0.86. That's the best card of any adapter so far (`ownstats-4gpu`: 4.69°, 65 %, 0.55).
+
+```bash
+.venv/bin/python -m rollout.server.space deploy --adapter Gawtam/flux3-chess-lora \
+  --adapter-revision 3708f80aedf32a6a2397e772ed373de9f42109fa --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849 \
+  --no-normalization   # drops the ownstats quantiles a previous deploy set
+```
+
+**Offline, teacher-forced**, mean error, degrees (gripper %):
+
+| Joint | ep 25 | ep 30 |
+|---|---|---|
+| shoulder_pan | 1.6 | 1.5 |
+| shoulder_lift | 5.2 | 5.0 |
+| elbow_flex | 3.9 | 4.9 |
+| wrist_flex | 2.6 | 3.5 |
+| wrist_roll | 1.5 | 1.4 |
+| gripper | 3.8 | 2.4 |
+| arm mean | 3.0 | 3.3 |
+
+Close to the card, and about half the error of `ownstats-4gpu` (5.3 / 5.6). Latency is unchanged: 1.06 s
+inference, about 1.5 s per request.
+
+**Two real-arm runs** (one 20 s episode each, safety defaults):
+
+| Run | Motion before the stop | Furthest out (lift / elbow) | Gripper | Clamped ticks | Stopped by |
+|---|---|---|---|---|---|
+| 21:33 | 216 ticks (7 s) | **+14° / 8°** | opened to 17 % at 5.5 s | 151 (mostly pan) | stall: shoulder_lift 14° vs. 10° |
+| 21:35 | 113 ticks (3.8 s) | −1° / 39° | opened to 22 % during the reach | 31 | stall: shoulder_lift −1° vs. 3° |
+
+- **21:33:** a small fold at rest, then one smooth, continuous reach: lift −97 → −20° and elbow 95 → 44° in
+  2 s, then on down to lift +14°, elbow 15° by 5 s, with wrist_flex at the demos' 78–88°. That's the demo grasp
+  height (about lift 3–12°, elbow 12–18°) and **the first FLUX run to get there**. It opened the gripper to 17 %
+  while lowering further (elbow 8°), held, and when the model asked to raise shoulder_lift slightly (goal 10°)
+  the arm stayed at 14°: the extended arm sagging under gravity, or the gripper resting on the board or piece.
+  The model asked for shoulder_pan −19 to −22° throughout; the demo-range limit held it at −18° (97 clamped ticks).
+  wrist_roll drifted from −17° to −65°.
+- **21:35:** from rest it opened the gripper during the reach (22 % by 2 s, as the demos do), with pan to −16°
+  (within the limits this time). It stopped going down at lift −1°, elbow 39°, wrist_flex 64°: more bent and
+  with the wrist about 20° lower than the first run, so the fingertips most likely met the board or the piece
+  above grasp height. The stall guard stopped it there.
+- No runaway (step 500's commands reached 844°), no rest/reach cycling (as with the `ownstats` adapters), and
+  no bus error.
+
+**Takeaways:** step 2500 is the first FLUX policy that goes straight to the piece in one move and opens the
+gripper at grasp height. Both runs were stopped by the stall guard at the grasp, before the gripper closed, so
+it's still open whether it would grasp. The stall guard can't tell an arm resting on the board (or sagging when
+fully extended) from a blocked one; a stall gap closer to the 5°/tick cap (`--stall-gap 4.5`; it must stay
+below `--max-relative-target`) or a few more episodes would show whether it closes before stopping. That's the
+next check.
+
 ## ACT, fully local: `rtrtwrw/act_chess_c3_to_d5` (2026-10-17)
 
 An ACT policy (51.6M params, resnet18) trained from scratch with LeRobot 0.5.1 on **all 31 episodes** of
