@@ -68,7 +68,7 @@ Flow per episode: *record* (up to `--episode-time`) → *reset* (up to `--reset-
 ## Rig configuration
 
 The defaults below are set in the script. Stable `by-id` paths are used so re-plugging USB cables
-doesn't swap devices. Override any of them with an env var, e.g. `CAM_FRONT=/dev/video0 scripts/record_so101.sh ...`.
+doesn't swap devices. Override any of them with an env var, e.g. `CAM_FF=/dev/video0 scripts/record_so101.sh ...`.
 
 | Env var | Default | Device |
 |---|---|---|
@@ -77,10 +77,16 @@ doesn't swap devices. Override any of them with an env var, e.g. `CAM_FRONT=/dev
 | `FOLLOWER_ID` / `LEADER_ID` | `so101` | Calibration files in `~/.cache/huggingface/lerobot/calibration/{robots/so_follower,teleoperators/so_leader}/so101.json` |
 | `CAM_LEFT` | Logitech C920 (serial `2ED4DF6F`), `/dev/video4` | → `observation.images.left_side` |
 | `CAM_RIGHT` | Logitech C920, `/dev/video6` | → `observation.images.right_side` |
-| `CAM_FRONT` | Sonix USB2.0_CAM1, `/dev/video2` | → `observation.images.front` |
+| `CAM_FF` | Sonix USB2.0_CAM1 (wrist/gripper cam), `/dev/video2` | → `observation.images.ff` |
 | `CAM_WIDTH` / `CAM_HEIGHT` | 640 / 480 | Camera resolution |
 
-The laptop's built-in webcam (`/dev/video0`) is not used.
+The laptop's built-in webcam (`/dev/video0`) is not used. Ports, camera names/indices and calibration
+match the setup done in leLab (`~/.cache/huggingface/lerobot/robots/so101.json`), so datasets
+recorded here have the same features as the earlier leLab test datasets.
+
+The existing `so101` calibration files are reused as-is; nothing is recalibrated. If `lerobot-record`
+asks *"Press ENTER to use provided calibration file..."*, the values stored in the motors differ from the
+file. Pressing ENTER writes the file to the motors; typing `c` recalibrates from scratch.
 
 Useful helpers: `lerobot-find-port` (identify an arm's port by unplugging it),
 `lerobot-find-cameras opencv` (list cameras and save test frames), and

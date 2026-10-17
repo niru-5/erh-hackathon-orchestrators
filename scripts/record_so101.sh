@@ -30,7 +30,7 @@ Options:
 
 Hardware overrides (env vars):
   FOLLOWER_PORT, LEADER_PORT, FOLLOWER_ID, LEADER_ID,
-  CAM_LEFT, CAM_RIGHT, CAM_FRONT, CAM_WIDTH, CAM_HEIGHT
+  CAM_LEFT, CAM_RIGHT, CAM_FF, CAM_WIDTH, CAM_HEIGHT
 EOF
 }
 
@@ -41,7 +41,7 @@ FOLLOWER_ID="${FOLLOWER_ID:-so101}"   # ~/.cache/huggingface/lerobot/calibration
 LEADER_ID="${LEADER_ID:-so101}"       # ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/so101.json
 CAM_LEFT="${CAM_LEFT:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0}"
 CAM_RIGHT="${CAM_RIGHT:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0}"
-CAM_FRONT="${CAM_FRONT:-/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0}"
+CAM_FF="${CAM_FF:-/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0}"
 CAM_WIDTH="${CAM_WIDTH:-640}"
 CAM_HEIGHT="${CAM_HEIGHT:-480}"
 
@@ -100,13 +100,13 @@ if [[ -z "$REPO_ID" ]]; then
 fi
 
 # Sanity-check hardware before starting.
-for dev in "$FOLLOWER_PORT" "$LEADER_PORT" "$CAM_LEFT" "$CAM_RIGHT" "$CAM_FRONT"; do
+for dev in "$FOLLOWER_PORT" "$LEADER_PORT" "$CAM_LEFT" "$CAM_RIGHT" "$CAM_FF"; do
   [[ -e "$dev" ]] || { echo "error: device not found: $dev" >&2; exit 1; }
 done
 
 # OpenCV wants the real /dev/videoN node.
 cam() { echo "{type: opencv, index_or_path: $(readlink -f "$1"), width: $CAM_WIDTH, height: $CAM_HEIGHT, fps: $FPS}"; }
-CAMERAS="{left_side: $(cam "$CAM_LEFT"), right_side: $(cam "$CAM_RIGHT"), front: $(cam "$CAM_FRONT")}"
+CAMERAS="{left_side: $(cam "$CAM_LEFT"), right_side: $(cam "$CAM_RIGHT"), ff: $(cam "$CAM_FF")}"
 
 ARGS=(
   --robot.type=so101_follower
