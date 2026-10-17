@@ -74,3 +74,75 @@ Same architecture, same rollout path. The 31-episode model (see [inference.md](i
 did one clean cycle in its single real-arm run (reach, grasp at 5.5 %, carry, release at 14.6 %, back to rest by
 17 s). The 15-episode, 4000-step model does the same sequence, but faster (grasp at 4–5.5 s instead of 6–8 s), with a
 weaker release, and it often starts a second attempt within the 20 s.
+
+## `rtrtwrw/act_chess_c3_to_d5_10ep_step16000` (2026-10-17)
+
+The same ACT setup (LeRobot 0.5.1, resnet18, three cameras at 480×640, 100 actions per plan, all executed) trained
+from scratch on the **10 shortest episodes** (`[19, 12, 14, 10, 18, 15, 20, 9, 16, 28]`, 3,422 frames; the first 10
+of the 15-episode set) for **16,000 steps** at batch 24 (the final checkpoint).
+
+```bash
+.venv/bin/python -m rollout run --robot so101 --policy local:lerobot \
+  --weights rtrtwrw/act_chess_c3_to_d5_10ep_step16000 --revision 3572cef3c66048fffa0fc0d41357b6a497f64445 \
+  --task "Move the figure from c3 at 6cm to D5 at 10 cm" --episode-time 20
+```
+
+### Offline, teacher-forced (episode 25, held out for both models)
+
+| Joint | 10 ep, 16,000 steps | 15 ep, 4000 steps | do-nothing |
+|---|---|---|---|
+| shoulder_pan | 3.1 | 3.0 | 7.0 |
+| shoulder_lift | 22.2 | 23.1 | 69.3 |
+| elbow_flex | 18.3 | 19.0 | 47.8 |
+| wrist_flex | 5.6 | 5.2 | 10.2 |
+| wrist_roll | 4.7 | 4.3 | 2.8 |
+| gripper | 7.6 | 7.1 | 5.4 |
+
+Offline the two models are indistinguishable.
+
+### On the real arm: three 20 s episodes (20:41–20:43)
+
+Safety defaults. All three completed the full 20 s (600 ticks, 6 plans) with no stall, no runaway and no bus error;
+0.43–0.44 s per plan, 26.5 Hz. All three started at rest. Logs: `rollout_logs/20261017_204113`, `_204211`, `_204317`.
+
+| Run | Reach c3, gripper opens | Gripper closes (measured vs commanded) | Carry pose toward d5 (pan / lift / elbow) | Release at d5 | Back at rest | Afterwards | Ticks clamped by limits |
+|---|---|---|---|---|---|---|---|
+| 1 (20:41:13) | 14 % at 2.2 s | 3.8 s (3.5 % vs 3.0 %), likely empty | −3° / 5° / 19° (5.4–6.4 s), **short** | none; reopens back at c3 (pan −8°) at 7.8 s | never | three more open/close cycles near c3 (9.1, 13.3, 20.6 s) | 0 |
+| 2 (20:42:11) | 24 % at 1.9 s | 5.4 s (**≈ 6 % vs 1 %**, holding) | −2° / 19° / −1 to 8° (6.4–8.9 s), **full reach, still ≈ 6 % vs 1–2 %** | not commanded; the gripper closes from 5 to 2 % as the arm lifts away at 9–10 s (the piece left the fingers) | never (heading there at 21 s) | two quick open/close cycles near c3 | 34 |
+| 3 (20:43:17) | 23 % at 1.6 s | 4.6 s (1.2 % vs 1.3 %), empty | −2° / 9° / 14° (6.4 s), medium | opens 12 % midway (pan −6°) at 7.9 s | never (partial, lift −50° at 11.3 s) | deeper second reach to c3 (opens 27 %), two more open/close cycles | 3 |
+
+Reading:
+
+- **Reach and grasp are learned, carry and release mostly aren't.** Every run reaches c3 at 2–3 s and closes the
+  gripper at 4–5.5 s. Only run 2 makes the full reach toward d5 (lift 19°, elbow −1°); runs 1 and 3 stop short and
+  reopen on the c3 side or midway.
+- **No deliberate release at d5 in any run.** In run 2 the piece left the fingers while the arm lifted away, without
+  an open command.
+- **Run 2 has the clearest grip of all ACT runs**: a 4–5 % gap between the measured and commanded gripper, held for
+  about 3.5 s of carrying. The other grasps close to within 0.5 % of the command (likely empty).
+- **It never returns to rest**: it cycles between c3 and a partial carry, 3–5 open/close cycles per 20 s.
+- The motion is smooth and stays inside the demonstrations' range (0–34 clamped ticks).
+
+## Comparison of the ACT models
+
+| | `act_chess_c3_to_d5` | `…_15ep_h100_step4000` | `…_10ep_step16000` |
+|---|---|---|---|
+| Training episodes / steps / batch | 31 / 12,000 (of 22,000) / – | 15 / 4000 / 96 | 10 / 16,000 / 24 |
+| Offline, ep 25: lift / elbow error | 7.0° / 4.2° (trained on ep 25) | 23.1° / 19.0° | 22.2° / 18.3° |
+| Real-arm runs | 1 | 6 | 3 |
+| Reach c3 and close the gripper | 1 of 1 | 6 of 6 | 3 of 3 |
+| Full reach toward d5 | 1 of 1 | 5 of 6 (lift 11–26°; run 2 short, 4°) | 1 of 3 (lift 19°; others 5° and 9°) |
+| Gripper opens at d5 | 1 of 1 (14.6 %) | 5 of 6 (6–14 %) | 0 of 3 |
+| Back at rest within 20 s | 1 of 1 (17 s) | 3 of 6 (11.5–12.8 s) | 0 of 3 |
+| Clear grip (measured ≫ commanded) | yes (5.5 %) | at most 1.5 % gap | 1 of 3 (run 2, ≈ 5 % gap) |
+| Safety stops | none | none | none |
+
+- **More episodes beat more steps.** The 10-episode model trained 4× longer matches the 15-episode model offline but
+  does less of the task on the arm: it rarely carries to d5 and never releases there. The 15-episode model does the
+  whole sequence most of the time, with a weak release. The 31-episode model did one clean cycle.
+- **Offline error doesn't rank these models**: 10 ep and 15 ep are within 1° offline on episode 25 but behave clearly
+  differently on the arm. Real-arm runs (several per model, from rest) are the comparison that matters.
+- **Whether the piece reached d5 was judged by eye and isn't logged.** The gripper's measured-vs-commanded gap is the
+  only signal in the logs, and it's weak.
+- All nine runs of the two new models were safe: no stall, runaway or servo error during a run (one failed
+  connection attempt before the first 15-episode run, fixed by retrying).
