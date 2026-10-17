@@ -12,9 +12,9 @@ import cv2
 from lerobot.cameras.opencv import OpenCVCamera, OpenCVCameraConfig
 
 CAMERAS = {
-    "left_side": os.environ.get("CAM_LEFT", "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0"),
-    "right_side": os.environ.get("CAM_RIGHT", "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0"),
-    "ff": os.environ.get("CAM_FF", "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0"),
+    "extra": os.environ.get("CAM_EXTRA", "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0"),
+    "scene": os.environ.get("CAM_SCENE", "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0"),
+    "wrist": os.environ.get("CAM_WRIST", "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0"),
 }
 
 out = Path(sys.argv[1] if len(sys.argv) > 1 else "camera_check")

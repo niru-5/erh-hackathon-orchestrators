@@ -31,7 +31,7 @@ a `_<YYYYmmdd_HHMMSS>` timestamp to the repo id of every **new** dataset, so the
                                      │  every frame @30 fps:
                                      │   action            = leader joint positions (6)
                                      │   observation.state = follower joint positions (6)
-                                     │   observation.images.{left_side,right_side,ff}
+                                     │   observation.images.{scene,wrist,extra}
                                      │   task              = --task prompt
                                      ▼
           ~/.cache/huggingface/lerobot/<hf_user>/so101_<timestamp>/   (LeRobotDataset v3.0)
@@ -116,21 +116,22 @@ No reset period follows the last episode.
 ## Rig configuration
 
 The defaults below are set in the script. Stable `by-id` paths are used so re-plugging USB cables
-doesn't swap devices. Override any of them with an env var, e.g. `CAM_FF=/dev/video0 scripts/record_so101.sh ...`.
+doesn't swap devices. Override any of them with an env var, e.g. `CAM_EXTRA=/dev/video0 scripts/record_so101.sh ...`.
 
 | Env var | Default | Device |
 |---|---|---|
 | `FOLLOWER_PORT` | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8E115116-if00` (currently `ttyACM0`) | Follower arm |
 | `LEADER_PORT` | `/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8E116682-if00` (currently `ttyACM1`) | Leader arm |
 | `FOLLOWER_ID` / `LEADER_ID` | `so101` | Calibration files in `~/.cache/huggingface/lerobot/calibration/{robots/so_follower,teleoperators/so_leader}/so101.json` |
-| `CAM_LEFT` | Logitech C920 (serial `2ED4DF6F`), `/dev/video4` | → `observation.images.left_side` |
-| `CAM_RIGHT` | Logitech C920, `/dev/video6` | → `observation.images.right_side` |
-| `CAM_FF` | Sonix USB2.0_CAM1 (wrist/gripper cam), `/dev/video2` | → `observation.images.ff` |
+| `CAM_SCENE` | Logitech C920, `/dev/video6` (leLab: `right_side`) | → `observation.images.scene`: fixed top view showing marks 0E–8E (training) |
+| `CAM_WRIST` | Sonix USB2.0_CAM1, `/dev/video2` (leLab: `ff`) | → `observation.images.wrist`: gripper cam (training) |
+| `CAM_EXTRA` | Logitech C920 `2ED4DF6F`, `/dev/video4` (leLab: `left_side`) | → `observation.images.extra`: recorded, not used for training |
 | `CAM_WIDTH` / `CAM_HEIGHT` | 640 / 480 | Camera resolution |
 
-The laptop's built-in webcam (`/dev/video0`) is not used. Ports, camera names/indices and calibration
-match the setup done in leLab (`~/.cache/huggingface/lerobot/robots/so101.json`), so datasets
-recorded here have the same features as the earlier leLab test datasets.
+The laptop's built-in webcam (`/dev/video0`) is not used. Ports, camera devices and calibration match
+the setup done in leLab (`~/.cache/huggingface/lerobot/robots/so101.json`). The cameras are renamed to
+`scene` / `wrist` / `extra`, so datasets recorded before 2026-10-17 13:00 (with `left_side` / `right_side` / `ff`)
+have different image feature names.
 
 The existing `so101` calibration files are reused as-is; nothing is recalibrated. If `lerobot-record`
 asks *"Press ENTER to use provided calibration file..."*, the values stored in the motors differ from the
@@ -153,9 +154,26 @@ Useful helpers: `lerobot-find-port` (identify an arm's port by unplugging it),
 └── videos/observation.images.<cam>/chunk-000/file-000.mp4
 ```
 
-Features: `action` (6 leader joint positions), `observation.state` (6 follower joint positions:
-`shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper`), and one video stream
-per camera.
+### Dataset spec
+
+| Feature | Shape / type | Content |
+|---|---|---|
+| fps | 30 Hz | `timestamp` = `frame_index / 30` |
+| `observation.state` | 6 × float32 | Follower joint positions: `shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper` |
+| `action` | 6 × float32 | **Absolute** leader-arm positions, same order |
+| `observation.images.scene` | 480×640×3 video | Fixed top view showing marks 0E–8E (training) |
+| `observation.images.wrist` | 480×640×3 video | Wrist/gripper camera (training) |
+| `observation.images.extra` | 480×640×3 video | Extra side camera (recorded, not used for training) |
+| `task` | string | The `--task` prompt |
+
+Actions and states are stored **raw**: no deltas, and no dataset normalization (`meta/stats.json` is
+metadata used only at training time). `action` is the leader's reading (`teleop.get_action()` through
+lerobot's default identity processor), not the command clipped for the follower (`max_relative_target`
+is unset anyway).
+
+Units: lerobot 0.6.0's SO-101 default `use_degrees=true` converts motor ticks with the calibration
+files into **degrees** for the 5 body joints, and **0–100 %** of the calibrated range for the gripper.
+These are absolute positions with the same scale for leader and follower, not ticks.
 
 Quick check after a recording:
 
@@ -210,6 +228,11 @@ Steps done to set up recording on the laptop:
    with `LeRobotDataset` as `v3.0` (2 episodes, 857 frames) with the layout shown above.
 8. **Keyboard controls.** The laptop runs Wayland, so lerobot 0.6.0 uses its terminal key listener:
    arrow keys and Esc must be pressed in the recording terminal.
+9. **Matched the dataset spec.** Renamed the cameras: `right_side` → `scene` (top view, marks 0E–8E),
+   `ff` → `wrist`, `left_side` → `extra`. Checked a test recording
+   (`local/so101_20261017_124726_20261017_124733`): `fps` 30 with timestamps spaced exactly 1/30 s,
+   `action`/`observation.state` are 6 × float32 in the spec order, and `action` tracks the follower state
+   (mean difference under 1° on most joints), confirming absolute leader positions, not deltas.
 
 ## Setup (already done on the recording laptop)
 

@@ -31,7 +31,7 @@ Options:
 
 Hardware overrides (env vars):
   FOLLOWER_PORT, LEADER_PORT, FOLLOWER_ID, LEADER_ID,
-  CAM_LEFT, CAM_RIGHT, CAM_FF, CAM_WIDTH, CAM_HEIGHT
+  CAM_SCENE, CAM_WRIST, CAM_EXTRA, CAM_WIDTH, CAM_HEIGHT
 EOF
 }
 
@@ -40,9 +40,9 @@ FOLLOWER_PORT="${FOLLOWER_PORT:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8
 LEADER_PORT="${LEADER_PORT:-/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B8E116682-if00}"
 FOLLOWER_ID="${FOLLOWER_ID:-so101}"   # ~/.cache/huggingface/lerobot/calibration/robots/so_follower/so101.json
 LEADER_ID="${LEADER_ID:-so101}"       # ~/.cache/huggingface/lerobot/calibration/teleoperators/so_leader/so101.json
-CAM_LEFT="${CAM_LEFT:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0}"
-CAM_RIGHT="${CAM_RIGHT:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0}"
-CAM_FF="${CAM_FF:-/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0}"
+CAM_EXTRA="${CAM_EXTRA:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_2ED4DF6F-video-index0}"
+CAM_SCENE="${CAM_SCENE:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0}"
+CAM_WRIST="${CAM_WRIST:-/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0}"
 CAM_WIDTH="${CAM_WIDTH:-640}"
 CAM_HEIGHT="${CAM_HEIGHT:-480}"
 
@@ -104,13 +104,14 @@ if [[ -z "$REPO_ID" ]]; then
 fi
 
 # Sanity-check hardware before starting.
-for dev in "$FOLLOWER_PORT" "$LEADER_PORT" "$CAM_LEFT" "$CAM_RIGHT" "$CAM_FF"; do
+for dev in "$FOLLOWER_PORT" "$LEADER_PORT" "$CAM_EXTRA" "$CAM_SCENE" "$CAM_WRIST"; do
   [[ -e "$dev" ]] || { echo "error: device not found: $dev" >&2; exit 1; }
 done
 
 # OpenCV wants the real /dev/videoN node.
 cam() { echo "{type: opencv, index_or_path: $(readlink -f "$1"), width: $CAM_WIDTH, height: $CAM_HEIGHT, fps: $FPS}"; }
-CAMERAS="{left_side: $(cam "$CAM_LEFT"), right_side: $(cam "$CAM_RIGHT"), ff: $(cam "$CAM_FF")}"
+# scene = fixed top view (marks 0E-8E), wrist = gripper cam: used for training. extra = recorded only.
+CAMERAS="{scene: $(cam "$CAM_SCENE"), wrist: $(cam "$CAM_WRIST"), extra: $(cam "$CAM_EXTRA")}"
 
 ARGS=(
   --robot.type=so101_follower
