@@ -446,6 +446,31 @@ That's similar to base FLUX with our normalization, slightly further out. Likely
 (step 125; shoulder_lift and elbow errors are still 11–14°), and the stop-and-go execution (1.07 s of motion,
 then 1.5 s still), after which the 8-tick history looks like an arm at rest.
 
+**Second real-arm run** (20:16, same checkpoint `ef2c656`, one 20 s episode, safety defaults; `start` was enough
+because the Space kept the adapter and normalization variables):
+
+- Ran the full 20 s (600 ticks, 19 plans, 49 s wall time) with no safety stop. 1.5 s per request (1.07 s inference).
+- Reached further than the first run: shoulder_lift up to −54° (first run −79°), elbow_flex down to 24°. Still short
+  of c3 (ACT grasped at about lift 6°, elbow 26°).
+- The same rest/reach cycle: out at 4–6 s, 11–14 s and 17–20 s, back to rest in between. The gripper opened to
+  about 30 % at 4 s and never closed.
+- 350 of 600 ticks clamped: shoulder_pan held at the −18° limit (the model asks for −20 to −26°; c3 is about −15°),
+  and elbow_flex commanded up to 119° at rest (limit 97°).
+- New: wrist_roll drifted steadily from −89° to −4° over the episode (about 85° of gripper rotation).
+
+**Where the normalization happens: on the server only.** The client never normalizes:
+
+1. The robot side (`rollout/codec.py`) sends the 8 measured states and the 8 commands in dataset units (degrees,
+   gripper %), plus the 4 snapshot JPEGs.
+2. At load, `FluxModel` (`rollout/models/flux.py`) replaces `cfg.state_normalization` / `cfg.action_normalization`
+   with the quantiles from `ROLLOUT_NORMALIZATION` (here the adapter's own).
+3. flux_action (commit `830f1ce`) reads them on every request: the states are normalized with the state quantiles
+   (`processing/history.py`, `conditioning_values`). The past commands become per-tick deltas and are normalized with
+   the action quantiles. The predicted deltas are de-normalized with the same action quantiles and integrated onto the
+   measured state (`policy.py`, `_targets_to_actions`).
+4. The response is absolute joint targets in degrees. The robot side applies the safety layer (limits, 5°/tick cap,
+   stall and runaway checks) and records the goal actually sent in the history.
+
 ## Testing
 
 ```bash
