@@ -202,6 +202,27 @@ motion did it **cover** (1 = all of it, 0 = none, < 0 = the wrong way)?
 Cost of this verification: about $0.60 of A100 time. Total on the Space so far: about $2.09 of the $20 budget (the
 ledger's estimate errs high).
 
+## 8. On the real arm: base FLUX with our normalization (19:15)
+
+Space with the base model and our normalization; one 20 s episode with the safety defaults (demo-range limits,
+5°/tick, stall guard, runaway abort at 30°). Logs: dry run `20261017_191515`, motion run `20261017_191557`.
+
+- **Dry run** (no goals sent): plan 1 settled gently at rest (lift −97 → −103, pan −6 → −9.5). The following
+  plans looked like the start of a demonstration: lift rising, elbow extending, pan to about −18°, gripper
+  opening to 27 % at tick 96. The runaway abort stopped it at tick 186 (elbow commanded −65°), the expected dry-run
+  drift since the arm never followed.
+- **Motion run: completed, safely.** 600 ticks (20 s of motion over 49 s: 1.07 s moving, about 1.5 s waiting per plan). No
+  stall, no runaway, no servo fault. The arm followed every goal within the 5° cap. Commands stayed bounded
+  (shoulder_lift −118…−38°, elbow 19…117°), unlike the LoRA runs (844°).
+- **What it did:** rest for about 4 s. Then it swung pan to −17.5° (toward c3) and opened the gripper to about 28 %, with lift
+  up to −66°: an approach. From about 10 s on it **never grasped and never lifted**. shoulder_lift kept falling back to rest
+  height (−96°) and rising again, the elbow swept 20–97° (arm low, reaching forward), the gripper stayed
+  15–30 % open, and wrist_roll drifted 70° (−89 → −17°, far from the demos' ≈ −78°). Clamps: mostly pan wanting to go past
+  −18° (263 ticks; demos stay within −17…8°) and elbow/lift pressing at the rest position.
+- **Reading:** the normalization keeps zero-shot FLUX in a sensible, safe range, and it starts the right
+  kind of motion (toward the piece, gripper open). But it doesn't complete a grasp, as section 7.2 predicted. The
+  stop-and-go execution (1.5 s pauses) likely makes it worse: after each pause the history no longer looks like smooth 30 Hz motion.
+
 ## Safety fixes (done)
 
 After the step-500 run, three fixes in `rollout/loop.py` (details in `docs/inference.md`, section Safety):
