@@ -625,12 +625,38 @@ and it was RUNNING about 3 minutes later.
 About half the step-500 error and slightly below `flux3-chess-lora` step 2500, mostly in shoulder_pan and elbow_flex.
 Latency is unchanged: 1.06 s inference, about 1.5 s per request.
 
-**Real arm: not run yet.** Both attempts (22:47, 22:49) failed while connecting, before any motion, with follower bus
-errors on different motors ("no status packet" on id 5 at torque enable, then "incorrect status packet" on id 1
+**Bus errors first.** The first two attempts (22:47, 22:49) failed while connecting, before any motion, with follower
+bus errors on different motors ("no status packet" on id 5 at torque enable, then "incorrect status packet" on id 1
 while reading the calibration). A read-only `scripts/check_calibration.py` in between read all six motors cleanly. The
 two previous runs (21:38 and 21:40, `flux3-chess-lora` with the stall guard off) both ended mid-episode with no
-summary, the second with the arm extended (lift −6°, elbow 36°), so the servos most likely went into overload
-protection. Power-cycle the arm before the next run.
+summary, the second with the arm extended. **Reconnecting the follower fixed it.**
+
+**Three real-arm runs** (one 20 s episode each, safety defaults, run back to back so each starts where the last ended):
+
+| Run | Motion before the stop | Furthest out (lift / elbow) | Gripper | Clamped ticks | Stopped by |
+|---|---|---|---|---|---|
+| 22:53 | 130 ticks (4.3 s) | −12° / 52° | opened to 22 %, closed (6 % vs. 3 % commanded) | 35 | stall: elbow_flex 52° vs. 56° |
+| 22:54 | 600 ticks (the full 20 s) | **+20° / 6°** at the end | ~6 open/close cycles, then held at 6.2 % vs. ~1 % commanded | 0 | end of episode; gripper **overload error** at disconnect |
+| 22:55 | 51 ticks (1.7 s) | +27° / 2° (start) | opened 8 → 15 % | 0 | stall: shoulder_lift 23° vs. 19° |
+
+- **22:53:** from rest, one direct reach toward c3 (pan to −12°, lift −97 → −12°, elbow 95 → 52° in 6 s) while
+  opening the gripper to 22 %, then closed it at about 8 s. It stopped at 6.4 % with 2.7 % commanded, so it was closing
+  on something. wrist_flex sank to 52°, about 25° below the demos, as at step 500.
+- **22:54:** from the end of the first run. It opened and closed the gripper about six times over c3, lower each time
+  (lift −14 → +2°, elbow 52 → 30°), while wrist_flex rose to the demos' 75–88°. From 43 s the gripper stayed at
+  6.2 % with 0.5–1.3 % commanded (**holding an object**), and the arm carried: pan −10 → −1°, lift −6 → +20°,
+  elbow 36 → 6°, the longer reach out to d5 (ACT carried at lift 25°, elbow 1°). The episode ended mid-carry; the
+  gripper servo reported an overload on disconnect, consistent with squeezing the piece.
+- **22:55:** from fully extended over d5 (the arm sagged to lift +27° when torque was released). It opened the gripper
+  from 8 to 15 %, releasing at d5, and asked to raise shoulder_lift; the extended arm couldn't (gravity or resting on
+  the board), and the stall guard stopped it.
+- No runaway, no rest/reach cycling, no bus error once reconnected. Whether the piece actually landed on d5 was not
+  checked by eye in this session; the logs show reach, close-on-object, carry and release.
+
+**Takeaways:** step 2500 is the first FLUX policy whose logs show the whole sequence (reach, grasp, carry to d5,
+release), though split over three episodes by the stall guard and the 20 s limit. Next: one longer episode
+(`--episode-time 40`) with someone watching the board, and `--stall-gap 4.5` so a grasp or an extended arm under
+gravity isn't read as a block.
 
 ## Testing
 
