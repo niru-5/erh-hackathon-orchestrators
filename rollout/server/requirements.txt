@@ -1,0 +1,8 @@
+# GPU server for rollout.models.flux. Versions follow BFL's tested environment (flux-action docs/setup.md):
+# torch 2.10.0+cu128, transformers 5.16.1, NATTEN 0.21.6 built for torch 2.10 / CUDA 12.8.
+# Install torch first from the PyTorch index (see Dockerfile), then this file.
+flux-action[encoders] @ https://github.com/black-forest-labs/flux-action/archive/830f1ce178d7aea52f18fde31d8e8e36ce6bae21.tar.gz
+natten==0.21.6+torch2100cu128
+fastapi>=0.110,<1
+uvicorn>=0.30,<1
+opencv-python-headless>=4.10,<5
