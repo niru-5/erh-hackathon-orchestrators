@@ -24,7 +24,8 @@ Options:
   --reset-time SEC        Seconds to reset the scene between episodes (default: 30)
   --fps N                 Recording fps (default: 30)
   --push                  Push the dataset to the Hugging Face Hub when done (default: off)
-  --resume                Append episodes to an existing dataset (requires --repo-id)
+  --resume                Append episodes to an existing dataset (requires --repo-id; uses the
+                          default --root unless one is given)
   --exclude-camera NAMES  Comma-separated cameras to leave out: scene, wrist, extra
                           (e.g. --exclude-camera extra). Must match the dataset when resuming.
   --display               Show the Rerun live viewer (off by default: it can stall the record loop)
@@ -94,6 +95,12 @@ done
 [[ "$EPISODES" =~ ^[1-9][0-9]*$ ]] || { echo "error: --episodes must be a positive integer" >&2; exit 1; }
 if [[ "$RESUME" == true && -z "$REPO_ID" ]]; then
   echo "error: --resume needs --repo-id of the dataset to append to" >&2; exit 1
+fi
+# lerobot's resume() refuses root=None (it won't write into the Hub snapshot cache), so default to
+# the folder new recordings are saved in.
+if [[ "$RESUME" == true && -z "$ROOT" ]]; then
+  ROOT="${HF_LEROBOT_HOME:-${HF_HOME:-$HOME/.cache/huggingface}/lerobot}/$REPO_ID"
+  [[ -f "$ROOT/meta/info.json" ]] || { echo "error: no dataset to resume at $ROOT (pass --root DIR)" >&2; exit 1; }
 fi
 
 # Locate the venv that has lerobot installed: repo .venv (also from inside a git worktree), else PATH.

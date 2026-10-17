@@ -63,7 +63,7 @@ a `_<YYYYmmdd_HHMMSS>` timestamp to the repo id of every **new** dataset, so the
 | `--reset-time SEC` | 30 | Time to reset the scene between episodes |
 | `--fps N` | 30 | Recording / camera fps |
 | `--push` | off | Upload to the Hugging Face Hub when done |
-| `--resume` | off | Append to an existing dataset (needs its full timestamped `--repo-id`) |
+| `--resume` | off | Append to an existing dataset (needs its full timestamped `--repo-id`). lerobot's resume needs an explicit root, so the script passes the default `--root` unless you give one |
 | `--exclude-camera NAMES` | none | Cameras to leave out, comma-separated or repeated: `scene`, `wrist`, `extra` (see [Camera options](#camera-options)) |
 | `--display` | off | Show the Rerun live viewer (can stall recording, see [Recording speed](#recording-speed-30-hz)). `--no-display` is accepted and is the default |
 | `--dry-run` | | Print the full `lerobot-record` command and exit |
