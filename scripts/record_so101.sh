@@ -27,7 +27,7 @@ Options:
   --resume                Append episodes to an existing dataset (requires --repo-id)
   --exclude-camera NAMES  Comma-separated cameras to leave out: scene, wrist, extra
                           (e.g. --exclude-camera extra). Must match the dataset when resuming.
-  --no-display            Disable the Rerun live viewer
+  --display               Show the Rerun live viewer (off by default: it can stall the record loop)
   --dry-run               Print the lerobot-record command without running it
   -h, --help              Show this help
 
@@ -38,7 +38,8 @@ Cameras (-> observation.images.<name>):
 
 Hardware overrides (env vars):
   FOLLOWER_PORT, LEADER_PORT, FOLLOWER_ID, LEADER_ID,
-  CAM_SCENE, CAM_WRIST, CAM_EXTRA (device paths), CAM_WIDTH, CAM_HEIGHT (default 640x480)
+  CAM_SCENE, CAM_WRIST, CAM_EXTRA (device paths), CAM_WIDTH, CAM_HEIGHT (default 640x480),
+  CAM_FOURCC (default MJPG)
 EOF
 }
 
@@ -52,6 +53,7 @@ CAM_SCENE="${CAM_SCENE:-/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920-video-index0}
 CAM_WRIST="${CAM_WRIST:-/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0}"
 CAM_WIDTH="${CAM_WIDTH:-640}"
 CAM_HEIGHT="${CAM_HEIGHT:-480}"
+CAM_FOURCC="${CAM_FOURCC:-MJPG}"   # MJPG: the wrist cam only reaches ~27 fps with the default format
 
 TASK=""
 EPISODES=""
@@ -62,7 +64,7 @@ RESET_TIME=30
 FPS=30
 PUSH=false
 RESUME=false
-DISPLAY_DATA=true
+DISPLAY_DATA=false
 DRY_RUN=false
 EXCLUDE_CAMERAS=""
 EXTRA_ARGS=()
@@ -79,7 +81,8 @@ while [[ $# -gt 0 ]]; do
     --push) PUSH=true; shift ;;
     --resume) RESUME=true; shift ;;
     --exclude-camera) EXCLUDE_CAMERAS="${EXCLUDE_CAMERAS:+$EXCLUDE_CAMERAS,}$2"; shift 2 ;;
-    --no-display) DISPLAY_DATA=false; shift ;;
+    --display) DISPLAY_DATA=true; shift ;;
+    --no-display) DISPLAY_DATA=false; shift ;;  # default, kept for old commands
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; EXTRA_ARGS=("$@"); break ;;
@@ -103,6 +106,8 @@ done
 LEROBOT_RECORD="${LEROBOT_RECORD:-$(command -v lerobot-record || true)}"
 [[ -n "$LEROBOT_RECORD" ]] || { echo "error: lerobot-record not found (see docs/data_collection.md)" >&2; exit 1; }
 HF_CLI="$(dirname "$LEROBOT_RECORD")/hf"
+PYTHON="$(dirname "$LEROBOT_RECORD")/python"
+RECORD_TIMED="$REPO_ROOT/scripts/record_timed.py"
 
 # lerobot-record appends _<YYYYmmdd_HHMMSS> to the repo id of every new dataset (not on --resume).
 if [[ -z "$REPO_ID" ]]; then
@@ -133,7 +138,7 @@ for name in "${CAM_NAMES[@]}"; do
 done
 
 # OpenCV wants the real /dev/videoN node.
-cam() { echo "{type: opencv, index_or_path: $(readlink -f "$1"), width: $CAM_WIDTH, height: $CAM_HEIGHT, fps: $FPS}"; }
+cam() { echo "{type: opencv, index_or_path: $(readlink -f "$1"), width: $CAM_WIDTH, height: $CAM_HEIGHT, fps: $FPS, backend: V4L2, fourcc: $CAM_FOURCC}"; }
 CAMERAS=""
 for name in "${CAM_NAMES[@]}"; do
   CAMERAS+="${CAMERAS:+, }$name: $(cam "${CAM_DEVICES[$name]}")"
@@ -158,6 +163,8 @@ ARGS=(
   --dataset.streaming_encoding=true
   --dataset.encoder_threads=2
   --display_data="$DISPLAY_DATA"
+  --display_compressed_images=true
+  --play_sounds=false
   --resume="$RESUME"
 )
 [[ -n "$ROOT" ]] && ARGS+=(--dataset.root="$ROOT")
@@ -166,8 +173,9 @@ if [[ "$RESUME" == true ]]; then echo "Appending $EPISODES episode(s) -> $REPO_I
 echo "Task: $TASK"
 echo "Cameras: ${CAM_NAMES[*]}"
 if [[ "$DRY_RUN" == true ]]; then
-  printf '%q ' "$LEROBOT_RECORD" "${ARGS[@]}" "${EXTRA_ARGS[@]}"; echo
+  printf '%q ' "$PYTHON" "$RECORD_TIMED" "${ARGS[@]}" "${EXTRA_ARGS[@]}"; echo
   exit 0
 fi
 set -x
-exec "$LEROBOT_RECORD" "${ARGS[@]}" "${EXTRA_ARGS[@]}"
+# record_timed.py runs lerobot-record unchanged and prints a real-time 30 Hz report at the end.
+exec "$PYTHON" "$RECORD_TIMED" "${ARGS[@]}" "${EXTRA_ARGS[@]}"

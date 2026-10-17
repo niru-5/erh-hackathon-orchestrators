@@ -65,7 +65,7 @@ a `_<YYYYmmdd_HHMMSS>` timestamp to the repo id of every **new** dataset, so the
 | `--push` | off | Upload to the Hugging Face Hub when done |
 | `--resume` | off | Append to an existing dataset (needs its full timestamped `--repo-id`) |
 | `--exclude-camera NAMES` | none | Cameras to leave out, comma-separated or repeated: `scene`, `wrist`, `extra` (see [Camera options](#camera-options)) |
-| `--no-display` | display on | Disable the Rerun live viewer (recommended, see [Recording speed](#recording-speed-30-hz)) |
+| `--display` | off | Show the Rerun live viewer (can stall recording, see [Recording speed](#recording-speed-30-hz)). `--no-display` is accepted and is the default |
 | `--dry-run` | | Print the full `lerobot-record` command and exit |
 | `-- <args>` | | Extra args passed straight to `lerobot-record` |
 
@@ -80,8 +80,8 @@ scripts/record_so101.sh --task "Stack the blue block on the red block" --episode
 scripts/record_so101.sh --task "Stack the blue block on the red block" --episodes 10 \
   --repo-id niru-5/so101_stack_blocks_20261017_130512 --resume
 
-# only the two training cameras (scene + wrist), no live viewer
-scripts/record_so101.sh --task "Move the piece forward" --episodes 10 --exclude-camera extra --no-display
+# only the two training cameras (scene + wrist)
+scripts/record_so101.sh --task "Move the piece forward" --episodes 10 --exclude-camera extra
 ```
 
 ## Camera options
@@ -112,28 +112,57 @@ Camera settings (apply to all recorded cameras):
 | Resolution | env `CAM_WIDTH` / `CAM_HEIGHT` | 640 × 480 |
 | Frame rate | `--fps N` (also the dataset fps) | 30 |
 | Device | env `CAM_SCENE` / `CAM_WRIST` / `CAM_EXTRA` (a `/dev/videoN` or `/dev/v4l/by-id/...` path) | see table |
+| Pixel format | env `CAM_FOURCC` (backend is always V4L2) | `MJPG` (needed for the wrist cam to reach 30 fps) |
 
 Example: `CAM_WIDTH=1280 CAM_HEIGHT=720 scripts/record_so101.sh ...`. Only use a mode every camera
 supports at the chosen fps. Check with `lerobot-find-cameras opencv`, or
 `v4l2-ctl -d /dev/video6 --list-formats-ext` (`sudo apt install v4l-utils`). Higher resolutions
 cost encoding and USB bandwidth, so watch for the speed warning below. lerobot's OpenCV camera also
-supports `rotation` (0/90/180/270), `fourcc` (e.g. `MJPG`) and `color_mode`. These aren't exposed by the
+supports `rotation` (0/90/180/270) and `color_mode`. These aren't exposed by the
 script; pass a full `--robot.cameras=...` after `--` if needed.
 
 ## Recording speed (30 Hz)
 
 lerobot does **not** store wall-clock time: `timestamp = frame_index / fps`, so timestamps are always
-exactly 1/30 s apart even if the loop ran slower. If the log shows
-`Record loop is running slower (X Hz) than the target FPS (30 Hz)`, frames were dropped, and the episode
-plays back too fast with misaligned actions. **Don't train on such episodes**; re-record them with ←.
+exactly 1/30 s apart even if the loop ran slower. A slow loop means fewer real samples per second, so the
+episode plays back too fast and actions are misaligned. **Don't train on such episodes.**
 
-Check: an episode that ran its full `--episode-time` should have about `episode_time × 30` frames
-(60 s → about 1800).
+### The timing report (proof of 30 Hz)
 
-Seen on this laptop: with the Rerun viewer on, the loop fell to 7.9 Hz and then 0.2 Hz (Rerun hit its
-1.5 GiB memory limit and blocked). Fixes, in order: `--no-display` (or
-`-- --display_compressed_images=true`), `--exclude-camera extra`, and close leLab / browser tabs to
-free RAM.
+`record_so101.sh` runs lerobot-record through `scripts/record_timed.py`. This changes nothing in the
+recording; it times every iteration of lerobot's own record loop. At the end it prints:
+
+```
+===== Recording timing report: niru-5/so101_20261017_150000 (target 30 Hz) =====
+ ep  frames  wall s  real Hz  late  p99 ms  worst ms  1st ms  verdict
+  0     612    20.4    30.00     0    33.6      34.1    68.0  OK
+RESULT: all episodes at target rate
+```
+
+- **real Hz**: frames per real second (frames 2..N). **late**: frames that took over 50 ms (1.5× the budget).
+- **1st ms**: the first frame of each episode is where lerobot starts the video encoders. It takes
+  about 40–70 ms (≈ 1 frame lost per episode). This is expected and excluded from the verdict.
+- **OK** = real Hz ≥ 29.4 and no late frames after the first. Re-record episodes marked
+  `NOT 30 Hz`. Discarded (←) attempts aren't counted.
+- Saved to `~/.cache/huggingface/lerobot/timing/<repo_id>.json`.
+
+lerobot's own `Record loop is running slower (X Hz)` warning is about **one** frame (X = 1 / that
+frame's duration), not an average. One warning at an episode's start is the encoder start above; many
+warnings mean a real problem.
+
+### What the script does for 30 Hz (measured on this laptop, 2026-10-17)
+
+| Setting | Why |
+|---|---|
+| Cameras opened with `backend: V4L2, fourcc: MJPG` | With OpenCV defaults the **wrist cam delivered only 26.7 fps** (scene/extra 30.2). With V4L2 + MJPG all three deliver 30.2 fps. (Camera reads never block the loop; a slow camera gives repeated frames instead.) |
+| Rerun viewer **off** by default (`--display` to enable, with compressed images) | With the viewer on, the loop fell to 7.9 Hz and then 0.2 Hz (Rerun hit its 1.5 GiB memory limit and blocked the loop). leLab records at 30 Hz for the same reason: same lerobot loop, no Rerun. |
+| `play_sounds=false` | No speech-synthesis process starting at each episode. |
+| Streaming video encoding (`encoder_threads=2`) | Encodes during recording. No `Episode finished with N dropped frame(s)` was seen. |
+
+Not a bottleneck: motor bus reads take about 1 ms per arm (worst 4 ms) out of the 33 ms budget.
+
+If episodes still fail: `--exclude-camera extra`, then close leLab / browser tabs (RAM was at 12 of 15 GiB).
+`CAM_FOURCC=YUYV` restores the old camera format.
 
 ## Pushing to the Hugging Face Hub
 
@@ -290,6 +319,13 @@ Steps done to set up recording on the laptop:
    `action`/`observation.state` are 6 × float32 in the spec order, and `action` tracks the follower state
    (mean difference under 1° on most joints), confirming absolute leader positions, not deltas.
 10. **Added `--exclude-camera`** after a session with the Rerun viewer on dropped to 7.9 Hz, then 0.2 Hz.
+11. **Tuned for 30 Hz.** Compared leLab's recorder (`leLab/lelab/record.py`): it calls the same lerobot
+    `record_loop` with `display_data=False`, pins `V4L2`, and turns sounds off. Benchmarked the hardware with the
+    3 cameras running at once: default OpenCV gave scene 30.2 / wrist **26.7** / extra 30.2 fps, while V4L2 +
+    MJPG gave 30.2 fps on all three. Motor bus reads take about 1 ms per arm. Read lerobot's loop: the slow warning
+    is per frame, and the 14.2 / 25.3 Hz warnings of the 14:00 session were single first frames (encoder
+    start). Applied V4L2 + MJPG, viewer off by default, sounds off, and added the timing report
+    (`scripts/record_timed.py`, tested with a simulated record loop).
 
 ## Setup (already done on the recording laptop)
 
