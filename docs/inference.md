@@ -238,6 +238,44 @@ same episodes. Its error is what "never moving" scores. For example, episode 19 
 64°, elbow_flex 50° mean error over the episode; 5° / 3° over the first plan. Wall time and Hz are not
 meaningful on the dataset robot (it doesn't run in real time; video decoding sets the pace).
 
+## First results (2026-10-17, A100 Space, open loop on episode 0)
+
+The full path works with the real model: recorded episode 0 of our main dataset → `RemoteBackend` → HTTPS →
+Space (`a100-large`) → FLUX 3 Action → 15 plans of 32 actions, no errors.
+
+| | Value |
+|---|---|
+| Server inference per plan | 1.07 s (p50; eager BF16, no `torch.compile`) |
+| Round trip per plan (client) | 1.54 s p50, 2.25 s p95, 2.75 s max. So about 0.45 s is upload + network |
+| On the arm this would mean | 1.07 s of motion, then about 1.5 s holding still (≈ 40 % duty) |
+| Space start (paused → serving) | about 4.5 min (image start, weight download, two warm-up predictions) |
+
+**The predicted actions are far off, because of a joint-convention mismatch, not (only) model quality.**
+Mean error vs. the recorded actions: shoulder_lift 389°, elbow_flex 196°, wrist_flex 84°, wrist_roll 71°,
+shoulder_pan 54°, gripper 8.5 %. Even the first plan is off by 63° (lift) and 67° (roll). The model's own
+normalization quantiles (`policy_preprocessor_step_3_*.safetensors`, `dataset_statistics.json`) show the
+state range it was trained on:
+
+| Joint | Model training state, q01 … q99 | Our dataset state, q01 … q99 |
+|---|---|---|
+| shoulder_pan | −92.0 … 54.1 | −13.2 … 2.1 |
+| shoulder_lift | **84.8 … 184.2** | −95.5 … 23.8 |
+| elbow_flex | **61.4 … 178.9** | −4.4 … 94.5 |
+| wrist_flex | −24.0 … 80.6 | 64.6 … 92.6 |
+| wrist_roll | −124.5 … 60.2 | −85.3 … −65.5 |
+| gripper | 0.5 … 53.6 | 2.1 … 22.7 |
+
+Our calibration (lerobot 0.6.0, `use_degrees=true`) puts 0° at the middle of each joint's calibrated range.
+The SO-101 episodes in `lerobot/community_dataset_v3` that the model learned from use other zeros:
+shoulder_lift looks like ours + ~180°, and elbow_flex and the wrist joints are shifted too, possibly with a
+flipped sign. Fed our raw state, the model sees an arm pose it never saw, and its delta predictions explode.
+
+**Don't run this model on the arm until that's mapped.** It would command joints far outside our range;
+`--limits-from` would clamp them, but the motion would still be meaningless. Next step: estimate a per-joint
+sign and offset between the two conventions (e.g. compare the rest pose at the start of community episodes with ours,
+and confirm with a known pose on the arm). Then apply it in the client, before `History` and after the plan, so the
+model sees its training convention and the arm gets ours.
+
 ## Testing
 
 ```bash
