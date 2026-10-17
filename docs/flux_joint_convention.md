@@ -223,6 +223,35 @@ Space with the base model and our normalization; one 20 s episode with the safet
   kind of motion (toward the piece, gripper open). But it doesn't complete a grasp, as section 7.2 predicted. The
   stop-and-go execution (1.5 s pauses) likely makes it worse: after each pause the history no longer looks like smooth 30 Hz motion.
 
+### 8.2 Second attempt, piece on c3, arm at rest (19:19 and 19:21)
+
+- **19:19, false stop after 0.8 s.** The arm started folded with the elbow at 85° (run 1: 96°; demos' rest
+  92.8 ± 5.2°). Plan 1 gently tucks the elbow further in (goal 92–94°); the folded elbow can't follow (85 → 87°) and
+  the stall guard read the 5° gap as blocked. That's the arm pressing into its own fold, not a collision. The
+  reach-edge exemption didn't apply because 94° is inside the demos' reach. **Fix:** with the arm folded (shoulder_lift
+  within 10° of the lowest demonstrated value), pushing further into the fold (lift down, elbow up) isn't a stall.
+  Replayed on all five real-arm logs: the two LoRA runs still stop at about 5 s, the ACT run and both base-FLUX
+  runs never trip, and this false stop is gone (`test_stall_guard_ignores_folding_further_at_rest`).
+- **19:21, full run, completed safely.** 600 ticks (20 s of motion over 48.7 s), 19 plans at 1.50 s each, no stall, no
+  runaway, the arm within 5.5° of every goal. Commands bounded (lift −113…−70°, elbow 20…98°). Logs: `20261017_192112`.
+
+  | Time | Joints (state) | Reading |
+  |---|---|---|
+  | 0–7 s | pan −6 → −15°, lift −97 → −80°, elbow 86 → 68° | heads toward c3 |
+  | 9–40 s | gripper opens 25 → 37 %; pan pinned at the −17.5° limit (asks for down to −23°); lift −97…−74°; elbow 20–55°; wrist_flex 80–95° | reaches low, gripper open and pointing down |
+  | **≈ 40–43 s** | **gripper closes 36 → 2.5 %** | **a grasp attempt** |
+  | 43–49 s | gripper reopens to about 12 %; lift −97 → −82° | |
+
+  Compared with the demonstrations: at the grasp the demos **raise the shoulder** (lift ≈ +6°, elbow ≈ 26°, pan
+  ≈ −14°, e.g. the ACT run). FLUX keeps the shoulder folded (≈ −97°) and reaches with the elbow, so the gripper ends up
+  much closer to the base, likely short of c3. wrist_roll drifted again (−86 → −8°; demos ≈ −78°). Pan spent 281
+  ticks pinned at our −17.5° limit while the model asked for more.
+
+**Overall (two full runs):** zero-shot FLUX with our normalization is safe on our arm, and it does the coarse
+structure of a pick (turn toward the piece, open, close once). But with the wrong arm configuration (shoulder
+folded instead of raised), and with no carry or place. A fine-tune with our normalization (section 7.3) is the
+next step for FLUX; ACT already does the full episode.
+
 ## Safety fixes (done)
 
 After the step-500 run, three fixes in `rollout/loop.py` (details in `docs/inference.md`, section Safety):
