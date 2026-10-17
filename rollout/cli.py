@@ -85,6 +85,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     model.add_argument("--revision", help="flux/lerobot: Hub revision to pin")
     model.add_argument("--adapter", help="flux: LeRobot PEFT LoRA to merge, e.g. Gawtam/flux3-chess-lora")
     model.add_argument("--adapter-revision", help="flux: adapter revision to pin")
+    model.add_argument(
+        "--normalization", help="flux: quantiles JSON or dataset id to normalize with (see rollout/normalization.py)"
+    )
     model.add_argument("--device", default="auto", help="cuda, cpu or auto (default: cuda if available)")
     model.add_argument(
         "--n-action-steps", type=int, help="lerobot: actions executed per plan (default: the checkpoint's config)"
@@ -113,6 +116,7 @@ def _backend(args):
             "revision": args.revision,
             "adapter": args.adapter,
             "adapter_revision": args.adapter_revision,
+            "normalization": args.normalization,
         }
         if args.weights:
             kwargs["weights"] = args.weights

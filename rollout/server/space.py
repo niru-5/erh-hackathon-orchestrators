@@ -37,6 +37,7 @@ FILES = [
     "models/flux.py",
     "models/hold.py",
     "models/lora.py",
+    "normalization.py",
     "server/__init__.py",
     "server/__main__.py",
     "server/app.py",
@@ -130,6 +131,15 @@ def _wait_running(api: HfApi, args) -> None:
     print(f"running: {_host(api, args.space_id)}   (end the session with: python -m rollout.server.space stop)")
 
 
+def _normalization_json(spec: str | None) -> str | None:
+    """Inline JSON for the ROLLOUT_NORMALIZATION variable (computed locally from a dataset if needed)."""
+    if not spec:
+        return None
+    from ..normalization import load
+
+    return json.dumps(load(spec), separators=(",", ":"))
+
+
 def deploy(api: HfApi, args, ledger: Ledger) -> None:
     _check_budget(ledger, args.budget, args.hardware)
     token = get_token()
@@ -148,13 +158,17 @@ def deploy(api: HfApi, args, ledger: Ledger) -> None:
         "ROLLOUT_REVISION": args.revision,
         "ROLLOUT_ADAPTER": args.adapter,
         "ROLLOUT_ADAPTER_REVISION": args.adapter_revision,
+        "ROLLOUT_NORMALIZATION": _normalization_json(args.normalization),
     }
     for key, value in variables.items():
         if value:
             api.add_space_variable(args.space_id, key, value)
-    if args.no_adapter:
+    removed = (["ROLLOUT_ADAPTER", "ROLLOUT_ADAPTER_REVISION"] if args.no_adapter else []) + (
+        ["ROLLOUT_NORMALIZATION"] if args.no_normalization else []
+    )
+    if removed:
         existing = api.get_space_variables(args.space_id)
-        for key in ("ROLLOUT_ADAPTER", "ROLLOUT_ADAPTER_REVISION"):
+        for key in removed:
             if key in existing:
                 api.delete_space_variable(args.space_id, key)
     api.request_space_hardware(args.space_id, args.hardware, sleep_time=args.sleep_time)
@@ -220,6 +234,13 @@ def main() -> None:
     parser.add_argument("--adapter", help="deploy: LeRobot PEFT LoRA to merge, e.g. Gawtam/flux3-chess-lora")
     parser.add_argument("--adapter-revision", help="deploy: pin the adapter's Hub revision")
     parser.add_argument("--no-adapter", action="store_true", help="deploy: remove a previously set adapter")
+    parser.add_argument(
+        "--normalization",
+        help="deploy: quantiles JSON file or dataset id; the server normalizes with it (see rollout/normalization.py)",
+    )
+    parser.add_argument(
+        "--no-normalization", action="store_true", help="deploy: back to the checkpoint's normalization"
+    )
     parser.add_argument("--no-wait", action="store_true", help="deploy/start: return without waiting for RUNNING")
     parser.add_argument("--wait-timeout", type=float, default=2400, help="seconds to wait for RUNNING (default 2400)")
     args = parser.parse_args()

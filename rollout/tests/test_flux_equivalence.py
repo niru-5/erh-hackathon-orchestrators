@@ -189,3 +189,27 @@ def test_lora_merge_rejects_unknown_modules(tmp_path):
     )
     with pytest.raises(KeyError):
         merge_lora(policy, str(tmp_path / "adapter"))
+
+
+def test_dataset_normalization_replaces_checkpoint_quantiles():
+    """FluxModel(normalization=...) changes what the model sees; the checkpoint's own quantiles change nothing."""
+    policy = tiny_so101_policy()
+    own = {"state": dict(policy.config.state_normalization), "action": dict(policy.config.action_normalization)}
+    ticks = observations(9)
+
+    def plan(model):
+        history = History(model.spec())
+        for obs in ticks:
+            history.append(obs, None if len(history) == 0 else obs.state)
+        return model.predict(history.window("move")).actions
+
+    baseline = plan(FluxModel(policy=policy, weights="tiny"))
+    np.testing.assert_allclose(plan(FluxModel(policy=policy, weights="tiny", normalization=own)), baseline, atol=1e-6)
+    ours = {
+        "state": {"q01": [-15, -97, -24, 55, -105, 1], "q99": [4, 39, 97, 100, 46, 36]},
+        "action": {"q01": [-0.8, -3.5, -2.6, -1.5, -1.0, 0.6], "q99": [0.6, 3.8, 3.7, 1.3, 0.8, 36.0]},
+        "source": "ours",
+    }
+    model = FluxModel(policy=policy, weights="tiny", normalization=ours)
+    assert policy.config.state_normalization["q01"][1] == -97 and model.spec().name == "tiny [norm: ours]"
+    assert np.abs(plan(model) - baseline).max() > 1e-3

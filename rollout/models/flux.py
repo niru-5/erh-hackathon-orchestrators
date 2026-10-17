@@ -25,6 +25,8 @@ class FluxModel:
         offload_text_encoder: bool = False,
         adapter: str | None = None,  # LeRobot PEFT LoRA merged into the weights, e.g. Gawtam/flux3-chess-lora
         adapter_revision: str | None = None,
+        normalization: dict | str | None = None,  # our dataset's quantiles instead of the checkpoint's, see
+        # rollout/normalization.py (a dict, JSON string/file or dataset id)
         policy=None,  # an already loaded FluxActionPolicy (tests)
     ):
         from flux_action.processing.history import snapshot_indices
@@ -43,12 +45,26 @@ class FluxModel:
             )
         self.policy = policy
         cfg = policy.config
+        norm_source = None
+        if normalization is not None:
+            from ..normalization import load
+
+            stats = load(normalization)
+            for key in ("state", "action"):
+                if any(len(stats[key][q]) != cfg.action_dim for q in ("q01", "q99")):
+                    raise ValueError(f"normalization {key} quantiles must have {cfg.action_dim} values")
+            # read on every call by flux_action (normalization.normalize/denormalize), nothing is cached
+            cfg.state_normalization = {q: list(map(float, stats["state"][q])) for q in ("q01", "q99")}
+            cfg.action_normalization = {q: list(map(float, stats["action"][q])) for q in ("q01", "q99")}
+            norm_source = stats.get("source", "custom")
         if cfg.inference_profile != "history" or cfg.camera_layout != "side_by_side":
             raise ValueError("FluxModel supports the SO-101 history package (side_by_side cameras)")
         canvas_h, canvas_w = cfg.canvas_hw
         self._keys = tuple(cfg.camera_keys)  # "images.scene", "images.wrist"
         self._spec = PolicySpec(
-            name=(weights if isinstance(weights, str) else "flux") + (f"+{adapter}" if adapter else ""),
+            name=(weights if isinstance(weights, str) else "flux")
+            + (f"+{adapter}" if adapter else "")
+            + (f" [norm: {norm_source}]" if norm_source else ""),
             camera_keys=tuple(key.removeprefix("images.") for key in self._keys),
             n_obs_steps=cfg.n_obs_steps,
             snapshot_indices=tuple(snapshot_indices(cfg)),

@@ -33,6 +33,12 @@ def main() -> None:
     parser.add_argument(
         "--adapter-revision", default=os.environ.get("ROLLOUT_ADAPTER_REVISION") or None, help="flux: adapter revision"
     )
+    parser.add_argument(
+        "--normalization",
+        default=os.environ.get("ROLLOUT_NORMALIZATION") or None,
+        help="flux: quantiles JSON (inline or file) or dataset id to normalize with instead of the checkpoint's "
+        "(env ROLLOUT_NORMALIZATION; see rollout/normalization.py)",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
         "--compile",
@@ -52,6 +58,7 @@ def main() -> None:
             "revision": args.revision,
             "adapter": args.adapter,
             "adapter_revision": args.adapter_revision,
+            "normalization": args.normalization,
             "device": args.device,
             "compile_dit": args.compile,
             "offload_text_encoder": args.offload_text_encoder,
