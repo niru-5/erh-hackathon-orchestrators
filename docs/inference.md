@@ -474,6 +474,68 @@ because the Space kept the adapter and normalization variables):
 4. The response is absolute joint targets in degrees. The robot side applies the safety layer (limits, 5°/tick cap,
    stall and runaway checks) and records the goal actually sent in the history.
 
+## Full-recipe LoRA with our normalization: `Gawtam/flux3-chess-lora-ownstats-4gpu` (2026-10-17, 21:19)
+
+The same setup as `Gawtam/flux3-chess-lora-ownstats` (rank 32, our dataset's quantiles from training episodes 0–23),
+but a fresh run of the full recipe on 4 × H100 (batch 2 per GPU, effective batch 8). The repo root is **step 500,
+EMA** (revision `6cc8a2d`). The card reports 4.69° offline arm error vs. 7.00° for the base model with our statistics,
+and on moving windows 65 % right direction (base 46 %) with median coverage 0.55 (base −0.09).
+
+Deployed the same way, with the quantiles taken from this repo's processor files (same scheme, different values):
+
+```bash
+# as in the previous section, with repo Gawtam/flux3-chess-lora-ownstats-4gpu,
+# revision 6cc8a2d38d098cad411bd015500616c93152cc07 -> ownstats4gpu_norm.json
+.venv/bin/python -m rollout.server.space deploy --adapter Gawtam/flux3-chess-lora-ownstats-4gpu \
+  --adapter-revision 6cc8a2d38d098cad411bd015500616c93152cc07 --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849 \
+  --normalization ownstats4gpu_norm.json
+```
+
+**Offline, teacher-forced**, mean error, degrees (gripper %), next to the step-125 `ownstats` adapter:
+
+| Joint | ep 25 | ep 30 | `ownstats` (step 125) ep 25 / 30 |
+|---|---|---|---|
+| shoulder_pan | 2.8 | 3.2 | 3.0 / 3.5 |
+| shoulder_lift | 9.9 | 8.4 | 13.6 / 11.5 |
+| elbow_flex | 8.1 | 9.5 | 10.7 / 12.4 |
+| wrist_flex | 4.4 | 5.1 | 4.9 / 5.8 |
+| wrist_roll | 1.3 | 1.6 | 1.2 / 1.4 |
+| gripper | 2.1 | 3.2 | 2.2 / 3.2 |
+| arm mean | 5.3 | 5.6 | 6.7 / 6.9 |
+
+The gain is in shoulder_lift and elbow_flex, the joints that carry the reach. Latency is unchanged: 1.06 s
+inference, about 1.5 s per request.
+
+**Three real-arm runs** (one 20 s episode each, safety defaults; Esc wasn't available, no display in the session):
+
+| Run | Motion before the stop | Furthest out (lift / elbow) | Gripper | Clamped ticks | Stopped by |
+|---|---|---|---|---|---|
+| 21:19 | 99 ticks (3.3 s) | −22° / 60° | opened to 27 % | 1 | stall: elbow_flex 60° vs. 65°, lift −22° vs. −19° |
+| 21:22 | 427 ticks (14 s) | −15° / 26° | opened to 30 % | 5 | stall: elbow_flex folding back at 0.3°/tick |
+| 21:23 | 437 ticks (14.5 s) | −18° / 47° | opened to 31 %, closed empty | 115 | stall: elbow_flex 71° vs. 76° |
+
+- **21:19:** one direct reach toward c3: pan to −16°, lift −90 → −22°, elbow 90 → 60°, gripper opening. Then lift
+  and elbow both stopped short of their goals: it was pressing against the board or the piece. wrist_flex had
+  sunk from 77° to 59°, about 20° below the demos at the same phase (episodes 25 and 30 open the gripper with
+  wrist_flex 80–83°), so the fingertips were probably pointing into the board.
+- **21:22:** started out of rest (lift −68°, pan −15°, wrist_roll −42°: where the arm was put down after the first
+  run). Reached out at 0–3 s with wrist_flex at 84° (as in the demos), stayed out, swung pan from −17° to 0° with
+  the gripper closed at 5.5–7.5 s, went partway back, reached out again and opened the gripper at about 11 s, then
+  folded the elbow back slowly until the stall guard stopped it.
+- **21:23:** from rest: folded further first (lift commanded −103°), reached out to lift −47° and opened the
+  gripper at 3 s, then went all the way back to rest with the gripper open (elbow commanded up to 107°, wrist_flex
+  down to 38°; most of the 115 clamped ticks). Two more reaches; on the last one (12.5–13.5 s) pan swung from −14°
+  to −1° and the gripper **closed**, to 1 %, so on nothing and not over c3.
+- wrist_roll drifted steadily again (−42° → 0° in the second run), as with the step-125 adapter.
+- No runaway and no bus error in any run.
+
+**Takeaways:** this is the best FLUX adapter on the arm so far. Each run heads for c3 and opens the gripper, and the
+first and second runs got further out than the step-125 adapter ever did (lift −22° and −15° vs. −54° for the step-125
+adapter). It still never gets down to grasp height (the demos reach about lift 3–12°, elbow 12–18°) and never
+grasps. The rest/reach cycle seen with the step-125 adapter remains. The stop-and-go execution (1.07 s of motion,
+then about 1.5 s still while the next plan is requested) likely feeds it: after each pause the 8-tick history looks
+like an arm at rest.
+
 ## Testing
 
 ```bash
