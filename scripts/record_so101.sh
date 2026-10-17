@@ -25,13 +25,20 @@ Options:
   --fps N                 Recording fps (default: 30)
   --push                  Push the dataset to the Hugging Face Hub when done (default: off)
   --resume                Append episodes to an existing dataset (requires --repo-id)
+  --exclude-camera NAMES  Comma-separated cameras to leave out: scene, wrist, extra
+                          (e.g. --exclude-camera extra). Must match the dataset when resuming.
   --no-display            Disable the Rerun live viewer
   --dry-run               Print the lerobot-record command without running it
   -h, --help              Show this help
 
+Cameras (-> observation.images.<name>):
+  scene                   Fixed top view, marks 0E-8E   (CAM_SCENE, default /dev/video6)  training
+  wrist                   Gripper camera                (CAM_WRIST, default /dev/video2)  training
+  extra                   Left side camera              (CAM_EXTRA, default /dev/video4)  recorded only
+
 Hardware overrides (env vars):
   FOLLOWER_PORT, LEADER_PORT, FOLLOWER_ID, LEADER_ID,
-  CAM_SCENE, CAM_WRIST, CAM_EXTRA, CAM_WIDTH, CAM_HEIGHT
+  CAM_SCENE, CAM_WRIST, CAM_EXTRA (device paths), CAM_WIDTH, CAM_HEIGHT (default 640x480)
 EOF
 }
 
@@ -57,6 +64,7 @@ PUSH=false
 RESUME=false
 DISPLAY_DATA=true
 DRY_RUN=false
+EXCLUDE_CAMERAS=""
 EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -70,6 +78,7 @@ while [[ $# -gt 0 ]]; do
     --fps) FPS="$2"; shift 2 ;;
     --push) PUSH=true; shift ;;
     --resume) RESUME=true; shift ;;
+    --exclude-camera) EXCLUDE_CAMERAS="${EXCLUDE_CAMERAS:+$EXCLUDE_CAMERAS,}$2"; shift 2 ;;
     --no-display) DISPLAY_DATA=false; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -103,15 +112,33 @@ if [[ -z "$REPO_ID" ]]; then
   REPO_ID="${HF_USER:-local}/so101"
 fi
 
-# Sanity-check hardware before starting.
-for dev in "$FOLLOWER_PORT" "$LEADER_PORT" "$CAM_EXTRA" "$CAM_SCENE" "$CAM_WRIST"; do
+# scene = fixed top view (marks 0E-8E), wrist = gripper cam: used for training. extra = recorded only.
+declare -A CAM_DEVICES=([scene]="$CAM_SCENE" [wrist]="$CAM_WRIST" [extra]="$CAM_EXTRA")
+CAM_NAMES=()
+IFS=',' read -ra EXCLUDED <<< "$EXCLUDE_CAMERAS"
+for name in "${EXCLUDED[@]}"; do
+  [[ -n "${CAM_DEVICES[$name]+x}" ]] || { echo "error: unknown camera '$name' (choose from: scene, wrist, extra)" >&2; exit 1; }
+done
+for name in scene wrist extra; do
+  [[ ",$EXCLUDE_CAMERAS," == *",$name,"* ]] || CAM_NAMES+=("$name")
+done
+[[ ${#CAM_NAMES[@]} -gt 0 ]] || { echo "error: all cameras excluded" >&2; exit 1; }
+
+# Sanity-check hardware before starting (excluded cameras may be unplugged).
+for dev in "$FOLLOWER_PORT" "$LEADER_PORT"; do
   [[ -e "$dev" ]] || { echo "error: device not found: $dev" >&2; exit 1; }
+done
+for name in "${CAM_NAMES[@]}"; do
+  [[ -e "${CAM_DEVICES[$name]}" ]] || { echo "error: $name camera not found: ${CAM_DEVICES[$name]}" >&2; exit 1; }
 done
 
 # OpenCV wants the real /dev/videoN node.
 cam() { echo "{type: opencv, index_or_path: $(readlink -f "$1"), width: $CAM_WIDTH, height: $CAM_HEIGHT, fps: $FPS}"; }
-# scene = fixed top view (marks 0E-8E), wrist = gripper cam: used for training. extra = recorded only.
-CAMERAS="{scene: $(cam "$CAM_SCENE"), wrist: $(cam "$CAM_WRIST"), extra: $(cam "$CAM_EXTRA")}"
+CAMERAS=""
+for name in "${CAM_NAMES[@]}"; do
+  CAMERAS+="${CAMERAS:+, }$name: $(cam "${CAM_DEVICES[$name]}")"
+done
+CAMERAS="{$CAMERAS}"
 
 ARGS=(
   --robot.type=so101_follower
@@ -137,6 +164,7 @@ ARGS=(
 
 if [[ "$RESUME" == true ]]; then echo "Appending $EPISODES episode(s) -> $REPO_ID"; else echo "Recording $EPISODES episode(s) -> ${REPO_ID}_<timestamp> (lerobot adds the timestamp)"; fi
 echo "Task: $TASK"
+echo "Cameras: ${CAM_NAMES[*]}"
 if [[ "$DRY_RUN" == true ]]; then
   printf '%q ' "$LEROBOT_RECORD" "${ARGS[@]}" "${EXTRA_ARGS[@]}"; echo
   exit 0

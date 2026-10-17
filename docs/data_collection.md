@@ -64,7 +64,8 @@ a `_<YYYYmmdd_HHMMSS>` timestamp to the repo id of every **new** dataset, so the
 | `--fps N` | 30 | Recording / camera fps |
 | `--push` | off | Upload to the Hugging Face Hub when done |
 | `--resume` | off | Append to an existing dataset (needs its full timestamped `--repo-id`) |
-| `--no-display` | display on | Disable the Rerun live viewer |
+| `--exclude-camera NAMES` | none | Cameras to leave out, comma-separated or repeated: `scene`, `wrist`, `extra` (see [Camera options](#camera-options)) |
+| `--no-display` | display on | Disable the Rerun live viewer (recommended, see [Recording speed](#recording-speed-30-hz)) |
 | `--dry-run` | | Print the full `lerobot-record` command and exit |
 | `-- <args>` | | Extra args passed straight to `lerobot-record` |
 
@@ -78,7 +79,61 @@ scripts/record_so101.sh --task "Stack the blue block on the red block" --episode
 # add 10 more episodes to that dataset later: use the full id, timestamp included
 scripts/record_so101.sh --task "Stack the blue block on the red block" --episodes 10 \
   --repo-id niru-5/so101_stack_blocks_20261017_130512 --resume
+
+# only the two training cameras (scene + wrist), no live viewer
+scripts/record_so101.sh --task "Move the piece forward" --episodes 10 --exclude-camera extra --no-display
 ```
+
+## Camera options
+
+Camera names you can use with `--exclude-camera`. Each becomes `observation.images.<name>` in the dataset.
+
+| Name | Camera | Default device | Device override | Used for training |
+|---|---|---|---|---|
+| `scene` | Logitech C920, fixed top view showing marks 0E–8E | `/dev/video6` | `CAM_SCENE` | yes |
+| `wrist` | Sonix USB2.0_CAM1 on the gripper | `/dev/video2` | `CAM_WRIST` | yes |
+| `extra` | Logitech C920 `2ED4DF6F`, left side | `/dev/video4` | `CAM_EXTRA` | no (recorded only) |
+
+```bash
+--exclude-camera extra               # record scene + wrist
+--exclude-camera extra,wrist         # record scene only (same as: --exclude-camera extra --exclude-camera wrist)
+```
+
+- An excluded camera isn't opened at all, so it may be unplugged. Unknown names and excluding all
+  three cameras are rejected.
+- **A dataset's camera set is fixed when it's created.** With `--resume`, use the same
+  `--exclude-camera` as the first session, or lerobot rejects the mismatching features.
+- Excluding `extra` also lightens the load (one stream fewer to encode and display).
+
+Camera settings (apply to all recorded cameras):
+
+| Setting | How | Default |
+|---|---|---|
+| Resolution | env `CAM_WIDTH` / `CAM_HEIGHT` | 640 × 480 |
+| Frame rate | `--fps N` (also the dataset fps) | 30 |
+| Device | env `CAM_SCENE` / `CAM_WRIST` / `CAM_EXTRA` (a `/dev/videoN` or `/dev/v4l/by-id/...` path) | see table |
+
+Example: `CAM_WIDTH=1280 CAM_HEIGHT=720 scripts/record_so101.sh ...`. Only use a mode every camera
+supports at the chosen fps. Check with `lerobot-find-cameras opencv`, or
+`v4l2-ctl -d /dev/video6 --list-formats-ext` (`sudo apt install v4l-utils`). Higher resolutions
+cost encoding and USB bandwidth, so watch for the speed warning below. lerobot's OpenCV camera also
+supports `rotation` (0/90/180/270), `fourcc` (e.g. `MJPG`) and `color_mode`. These aren't exposed by the
+script; pass a full `--robot.cameras=...` after `--` if needed.
+
+## Recording speed (30 Hz)
+
+lerobot does **not** store wall-clock time: `timestamp = frame_index / fps`, so timestamps are always
+exactly 1/30 s apart even if the loop ran slower. If the log shows
+`Record loop is running slower (X Hz) than the target FPS (30 Hz)`, frames were dropped, and the episode
+plays back too fast with misaligned actions. **Don't train on such episodes**; re-record them with ←.
+
+Check: an episode that ran its full `--episode-time` should have about `episode_time × 30` frames
+(60 s → about 1800).
+
+Seen on this laptop: with the Rerun viewer on, the loop fell to 7.9 Hz and then 0.2 Hz (Rerun hit its
+1.5 GiB memory limit and blocked). Fixes, in order: `--no-display` (or
+`-- --display_compressed_images=true`), `--exclude-camera extra`, and close leLab / browser tabs to
+free RAM.
 
 ## Pushing to the Hugging Face Hub
 
@@ -230,9 +285,11 @@ Steps done to set up recording on the laptop:
    arrow keys and Esc must be pressed in the recording terminal.
 9. **Matched the dataset spec.** Renamed the cameras: `right_side` → `scene` (top view, marks 0E–8E),
    `ff` → `wrist`, `left_side` → `extra`. Checked a test recording
-   (`local/so101_20261017_124726_20261017_124733`): `fps` 30 with timestamps spaced exactly 1/30 s,
+   (`local/so101_20261017_124726_20261017_124733`): `fps` 30, and episode 0 has 1789 frames over its
+   60 s (about 29.8 Hz real rate; the timestamps don't show this, see [Recording speed](#recording-speed-30-hz)).
    `action`/`observation.state` are 6 × float32 in the spec order, and `action` tracks the follower state
    (mean difference under 1° on most joints), confirming absolute leader positions, not deltas.
+10. **Added `--exclude-camera`** after a session with the Rerun viewer on dropped to 7.9 Hz, then 0.2 Hz.
 
 ## Setup (already done on the recording laptop)
 
