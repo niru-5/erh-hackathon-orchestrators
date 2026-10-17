@@ -592,6 +592,46 @@ grasps. The rest/reach cycle seen with the step-125 adapter remains. The stop-an
 then about 1.5 s still while the next plan is requested) likely feeds it: after each pause the 8-tick history looks
 like an arm at rest.
 
+### Step 2500, the end of training (2026-10-17, 22:45)
+
+The repo root is now **step 2500, EMA** (revision `ef78fbb`). The card reports 2.59° arm / 2.19 % gripper on
+held-out episodes 24–30 (step 500: 4.69°, base with our statistics 7.00°), and on moving windows 3.70° error, 94 %
+right direction, median coverage 0.85: the best card of any adapter so far (`flux3-chess-lora` step 2500: 2.73°,
+90 %, 0.86). The quantiles in the processor files are identical to step 500's.
+
+```bash
+# ownstats4gpu_2500_norm.json: as in the previous section, with revision ef78fbb1b6d4993a8dfc0d8527381884530bf994
+.venv/bin/python -m rollout.server.space deploy --adapter Gawtam/flux3-chess-lora-ownstats-4gpu \
+  --adapter-revision ef78fbb1b6d4993a8dfc0d8527381884530bf994 --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849 \
+  --normalization ownstats4gpu_2500_norm.json
+```
+
+`deploy` restarts the Space only when it is PAUSED or STOPPED. When it is SLEEPING (here, after the `--sleep-time`
+backstop), it waits until the timeout without waking it. `HfApi().restart_space("niru-5/flux3-so101-rollout")` woke it,
+and it was RUNNING about 3 minutes later.
+
+**Offline, teacher-forced**, mean error, degrees (gripper %):
+
+| Joint | ep 25 | ep 30 | step 500 ep 25 / 30 | `flux3-chess-lora` step 2500 ep 25 / 30 |
+|---|---|---|---|---|
+| shoulder_pan | 1.3 | 1.3 | 2.8 / 3.2 | 1.6 / 1.5 |
+| shoulder_lift | 5.3 | 5.5 | 9.9 / 8.4 | 5.2 / 5.0 |
+| elbow_flex | 3.4 | 4.6 | 8.1 / 9.5 | 3.9 / 4.9 |
+| wrist_flex | 2.6 | 3.3 | 4.4 / 5.1 | 2.6 / 3.5 |
+| wrist_roll | 1.3 | 1.0 | 1.3 / 1.6 | 1.5 / 1.4 |
+| gripper | 2.6 | 2.3 | 2.1 / 3.2 | 3.8 / 2.4 |
+| arm mean | 2.8 | 3.1 | 5.3 / 5.6 | 3.0 / 3.3 |
+
+About half the step-500 error and slightly below `flux3-chess-lora` step 2500, mostly in shoulder_pan and elbow_flex.
+Latency is unchanged: 1.06 s inference, about 1.5 s per request.
+
+**Real arm: not run yet.** Both attempts (22:47, 22:49) failed while connecting, before any motion, with follower bus
+errors on different motors ("no status packet" on id 5 at torque enable, then "incorrect status packet" on id 1
+while reading the calibration). A read-only `scripts/check_calibration.py` in between read all six motors cleanly. The
+two previous runs (21:38 and 21:40, `flux3-chess-lora` with the stall guard off) both ended mid-episode with no
+summary, the second with the arm extended (lift −6°, elbow 36°), so the servos most likely went into overload
+protection. Power-cycle the arm before the next run.
+
 ## Testing
 
 ```bash
