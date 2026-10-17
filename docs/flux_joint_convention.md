@@ -314,6 +314,44 @@ wrist_roll drifted −92 → +12° (toward the community rest ≈ 0°), more tha
 
 No grasp attempt this time (gripper open throughout). wrist_roll −96 → −20°.
 
+### 9.1 `Gawtam/flux3-chess-lora` step 2500 with the median statistics (2026-10-18, 00:12)
+
+The adapter's final checkpoint (repo root = step 2500, EMA, revision `3708f80`), served with the median stats instead
+of the checkpoint quantiles it was fine-tuned with. A deliberate mismatch, to see what happens:
+
+```bash
+.venv/bin/python -m rollout.server.space deploy --adapter Gawtam/flux3-chess-lora \
+  --adapter-revision 3708f80aedf32a6a2397e772ed373de9f42109fa --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849 \
+  --normalization scripts/flux_convention/median_norm.json
+```
+
+**Offline, teacher-forced, episodes 25 and 30** (`eval_lora2500_mediannorm`), mean error, degrees (gripper %):
+
+| Policy | pan | lift | elbow | wflex | wroll | **arm** | gripper |
+|---|---|---|---|---|---|---|---|
+| LoRA step 2500, median stats | 1.85 | 13.77 | 4.51 | 3.50 | 1.52 | **5.03** | 2.92 |
+| FLUX base, median stats | 5.59 | 10.50 | 8.83 | 7.57 | 4.17 | **7.33** | 3.48 |
+| Hold | 1.43 | 7.92 | 5.98 | 3.70 | 0.81 | **3.97** | 1.78 |
+
+Moving windows (14): **right direction 71 %, median coverage 0.56, arm error 6.07 vs. hold 7.12**. The first FLUX
+variant that beats "hold" on the windows where the demonstrator moves (section 7.2: every other variant ≤ 54 %).
+shoulder_lift is the weak joint (13.8°).
+
+**Dry run** (`dry_lora2500_mediannorm`): stopped at tick 118 by the runaway abort (elbow −64°), as every dry run.
+
+**On the real arm** (`real_lora2500_mediannorm/20261018_001257`, 20 s, safety defaults): stopped at tick 219 (7.3 s)
+by the **runaway abort**, shoulder_lift commanded −134° (range −104…42). 66 clamped ticks.
+
+| Time | Joints (state) | Reading |
+|---|---|---|
+| 0–1.1 s | rest, lift commanded −109° | tucks in |
+| 1.6–4.3 s | **lift −97 → −21°**, elbow 97 → 13°, gripper 1 → 15 %, pan ≈ 0° | a real shoulder lift (highest of any FLUX run on the arm), but straight ahead, not toward c3 (≈ −15°) |
+| 4.8–6.9 s | pan → −17°, lift −32 → −97°, elbow straight (0–3°) | swings toward c3 while lowering the outstretched arm all the way |
+| 6.9–7.3 s | lift at −97° (its floor), commanded −119 → −133°; wrist_roll −38 → −9° | keeps pushing down, runaway |
+
+Gripper 15–19 % open, never closed. Compared with section 9: the adapter lifts the shoulder, which no zero-shot run
+did, but in the wrong order (lift, then pan) and then drives the shoulder past its floor.
+
 **Reading:** the median stats are a valid alternative (same convention, same lift/elbow/gripper view) and slightly
 livelier on the arm: further elbow extension (10° vs. 20°), a pick-then-move shape. But the shoulder still never
 rises (max −52°; the demos grasp at about +6°), the gripper closes empty, and wrist_roll drifts further. Not better
