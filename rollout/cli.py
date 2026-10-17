@@ -234,7 +234,9 @@ def main(argv=None) -> int:
                 max_ticks=max_ticks,
                 teacher_forcing=args.robot == "dataset" and args.teacher_forcing,
                 stall_guard=(
-                    StallGuard(gap_deg=args.stall_gap)
+                    StallGuard(
+                        gap_deg=args.stall_gap, fold_lift=float(limits.reach_low[StallGuard.LIFT]) if limits else None
+                    )
                     if robot.realtime and args.stall_guard and not args.dry_run  # dry run: goals never move the arm
                     else None
                 ),

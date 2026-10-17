@@ -251,3 +251,14 @@ def test_stall_guard_ignores_the_folded_arm_at_rest_but_not_mid_range():
     guard = StallGuard()
     hits = [guard.update(mid, push, limits.beyond_reach(push)) for _ in range(12)]
     assert hits[-1] is not None
+
+
+def test_stall_guard_ignores_folding_further_at_rest():
+    """19:19 run: folded arm (lift -96.9), policy tucks the elbow 87 -> 94; the elbow can't follow. Not a stall."""
+    state = np.array([-5.8, -96.9, 87.0, 84.5, -85.8, 1.1], np.float32)
+    tuck = state + np.array([0, 0, 5, 0, 0, 0], np.float32)
+    guard = StallGuard(fold_lift=-97.05)
+    assert all(guard.update(state, tuck) is None for _ in range(30))
+    raised = state + np.array([0, 100, 0, 0, 0, 0], np.float32)  # same elbow push with the arm raised: stall
+    guard = StallGuard(fold_lift=-97.05)
+    assert [guard.update(raised, raised + np.array([0, 0, 5, 0, 0, 0], np.float32)) for _ in range(12)][-1]

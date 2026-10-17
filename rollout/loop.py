@@ -105,10 +105,25 @@ class StallGuard:
     ``range_end_deg`` of that edge. At rest the folded arm stops mechanically about 7 degrees short of the
     leader's command (demos: shoulder_lift commanded down to -103.6, the arm stops at -97), and policies
     reproduce that. A real collision happens mid-range, far from those edges.
+
+    Not a stall either: pushing further into the fold while the arm is folded (shoulder_lift within
+    ``range_end_deg`` of ``fold_lift``, the lowest shoulder_lift the demos reached): lift down or elbow up. Where the
+    folded elbow stops varies per episode (demos' rest: 92.8 +- 5.2; base FLUX run 19:19: 87, goal 94), so
+    the reach edge alone doesn't cover it. Every collision so far happened with the arm raised (lift 12..40).
     """
 
-    def __init__(self, gap_deg: float = 3.0, still_deg: float = 0.5, ticks: int = 10, range_end_deg: float = 10.0):
+    LIFT, ELBOW = ACTION_NAMES.index("shoulder_lift.pos"), ACTION_NAMES.index("elbow_flex.pos")
+
+    def __init__(
+        self,
+        gap_deg: float = 3.0,
+        still_deg: float = 0.5,
+        ticks: int = 10,
+        range_end_deg: float = 10.0,
+        fold_lift: float | None = None,
+    ):
         self.gap_deg, self.still_deg, self.ticks, self.range_end_deg = gap_deg, still_deg, ticks, range_end_deg
+        self.fold_lift = fold_lift
         self.joints = [i for i, name in enumerate(ACTION_NAMES) if name != "gripper.pos"]
         self.reset()
 
@@ -131,6 +146,9 @@ class StallGuard:
             if self._last_pinned is not None:
                 with np.errstate(invalid="ignore"):
                     at_range_end = np.abs(self._last_pinned - state) <= self.range_end_deg
+            if self.fold_lift is not None and state[self.LIFT] <= self.fold_lift + self.range_end_deg:
+                at_range_end[self.LIFT] |= self._last_goal[self.LIFT] < state[self.LIFT]  # folding the shoulder
+                at_range_end[self.ELBOW] |= self._last_goal[self.ELBOW] > state[self.ELBOW]  # folding the elbow
             blocked = (gap > self.gap_deg) & still & ~at_range_end
             self._count = np.where(blocked, self._count + 1, 0)
             hit = [i for i in self.joints if self._count[i] >= self.ticks]
