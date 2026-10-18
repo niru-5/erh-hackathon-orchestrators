@@ -293,6 +293,15 @@ It is a single file with no network access. It shows:
 
 Keys: space plays and pauses, ←/→ steps one tick, [ and ] jump between plans.
 
+### Actions per plan
+
+FLUX predicts 42 actions (1.4 s) per plan and the loop executes the first `n_action_steps` open loop before it
+replans: 32 by default (the checkpoint's config), the rest is dropped. `n_action_steps` (1..42) changes only how much
+of the chunk is executed, not the model: `python -m rollout.server.space deploy --n-action-steps 10` (Space variable
+`ROLLOUT_N_ACTION_STEPS`; `--default-action-steps` goes back to 32), `python -m rollout.server --n-action-steps 10`, or
+`run --policy local:flux --n-action-steps 10`. The loop is synchronous: the arm holds still for each request (about
+2.1 s with `--debug`), so fewer steps per plan means more and longer pauses.
+
 ## First results (2026-10-17, A100 Space, open loop on episode 0)
 
 The full path works with the real model: recorded episode 0 of our main dataset → `RemoteBackend` → HTTPS →
@@ -630,7 +639,7 @@ grasps. The rest/reach cycle seen with the step-125 adapter remains. The stop-an
 then about 1.5 s still while the next plan is requested) likely feeds it: after each pause the 8-tick history looks
 like an arm at rest.
 
-## 28-move LoRA, b1 → b4, first debug runs: `Gawtam/flux3-chess-lora-28moves` (2026-10-18, 04:45)
+## 28-move LoRA debug runs, b1 → b4 and a1 → a4, steps 1000 and 2000: `Gawtam/flux3-chess-lora-28moves` (2026-10-18, 04:45–05:29)
 
 Rank-32 LoRA over 28 moves (a1/b1/c1/d1 → x2…x8, 197 episodes), repo root = step 1000, EMA, revision `24a1fae`,
 normalized with its own dataset statistics (extracted from the processor files as for ownstats, above).
@@ -680,12 +689,97 @@ request instead of 1.5 s.
   the gripper **closed** (14 → 4 %) for the first time in these runs, while lifting back, but on nothing: the wrist camera
   shows empty jaws over the paper. wrist_roll sat on its −112° limit from 4 s on (most of the 424 capped ticks).
   The arm ended holding over a1, the piece still there.
+- **05:27, step 2000, 10 actions per plan** (`deploy --n-action-steps 10`: FLUX still predicts the 42-step chunk,
+  the loop executes the first 10 and drops 32, then replans; `/spec` names it `[10 steps/plan]`). Same prompt and limits.
+  47 plans over 468 ticks (15.6 s of motion, 115 s of wall time: 86 % spent waiting for plans). Reached by 3.3 s
+  (lift −12°, elbow 35°, gripper open 12 %) and tried a grasp at **5.5 s** (vs. 17 s with 32 steps per plan): the knight
+  between the jaws at 5.5–6 s, gripper closed 13 → 2 %, but at 6.7 s the jaws are empty and the knight still stands on
+  a1, so it closed just off the piece. Reopened, re-approached around 10 s, then backed off; the stall guard stopped it at
+  15.6 s (shoulder_lift, gap 4°). Replanning every 10 ticks made it react faster but tripled the pauses.
 
 **What the imagined frames show:** FLUX's imagined future matches what the cameras then saw closely in both runs.
 In plans 3–4 the imagined wrist view and the real one both show the gripper over the white paper with the two
 black tape marks beside the board edge near b1, not over the knight. So the arm went where the model intended:
 the model aims slightly off the piece, rather than the arm failing to follow a good plan.
 Logs and viewers: `rollout_logs/real_28moves_b1b4_debug/` and `rollout_logs/offline_28moves_b1b4_prompts/`.
+
+## Run log index (2026-10-17 to 2026-10-18)
+
+Every run under `rollout_logs/`, oldest first, generated from each run's `summary.json` (the logs themselves are
+git-ignored and stay on the rig's machine). Each run directory has a `viewer.html` (built for all of them with
+`python -m rollout view <run dir>`); runs marked **Debug** also have the camera frames, plan inputs and FLUX's imagined
+frames. "dry run" = real arm with goals never sent; "dataset ep N" = offline replay of a recorded episode (teacher
+forced); "(no result)" = the run ended before finishing an episode (a connect failure such as "no status packet", or
+an abort), so the summary has no episode. "time" = ran the full episode time.
+
+The `ownstats4gpu_ext` runs (02:12–02:26 on 2026-10-18, adapter `Gawtam/flux3-chess-lora-ownstats-4gpu-ext@a555c08`)
+are not written up elsewhere in this file. From their logs: offline eval on episodes 25 and 30, a dry run that
+stopped by the runaway abort (shoulder_lift commanded 75°), two real-arm runs stopped by the stall guard at 572 and
+241 ticks, and four `_noguard` attempts that ended without an episode result.
+
+| Run | Robot | Model | Task | Episodes | Ticks | Plans | Stopped by | Debug |
+|---|---|---|---|---|---|---|---|---|
+| `rollout_logs/20261017_192818` | dataset ep 25 | FLUX+flux3-chess-lora-ownstats [norm: flux3-chess-lora-ownstats@ef2c656 (processor files)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 516 | 17 | end of data |  |
+| `rollout_logs/20261017_192917` | dataset ep 30 | FLUX+flux3-chess-lora-ownstats [norm: flux3-chess-lora-ownstats@ef2c656 (processor files)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 388 | 13 | end of data |  |
+| `rollout_logs/20261017_193024` | dry run | FLUX+flux3-chess-lora-ownstats [norm: flux3-chess-lora-ownstats@ef2c656 (processor files)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 148 | 5 | runaway: elbow_flex.pos commanded -64 (range -33..97) |  |
+| `rollout_logs/20261017_193114` | real arm | FLUX+flux3-chess-lora-ownstats [norm: flux3-chess-lora-ownstats@ef2c656 (processor files)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 264 | 9 | stall: wrist_flex.pos (gap 3 deg) |  |
+| `rollout_logs/20261017_201607` | real arm | FLUX+flux3-chess-lora-ownstats [norm: flux3-chess-lora-ownstats@ef2c656 (processor files)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 19 | time |  |
+| `rollout_logs/20261017_202941` | dataset ep 25 | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 516 | 6 | end of data |  |
+| `rollout_logs/20261017_203007` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/20261017_203024` | dry run | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 90 | 1 | time |  |
+| `rollout_logs/20261017_203042` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_203144` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_203259` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_203441` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_203518` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_203825` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_15ep_h100_step4000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_204049` | dataset ep 25 | local:lerobot rtrtwrw/act_chess_c3_to_d5_10ep_step16000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 516 | 6 | end of data |  |
+| `rollout_logs/20261017_204113` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_10ep_step16000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_204211` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_10ep_step16000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_204317` | real arm | local:lerobot rtrtwrw/act_chess_c3_to_d5_10ep_step16000 | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 6 | time |  |
+| `rollout_logs/20261017_211731` | dataset ep 25,30 | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@6cc8a2d] | Move the figure from c3 at 6cm to D5 at 10 cm | 2 | 904 | 30 | end of data |  |
+| `rollout_logs/20261017_211938` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@6cc8a2d] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 99 | 4 | stall: elbow_flex.pos (gap 4 deg) |  |
+| `rollout_logs/20261017_212131` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@6cc8a2d] | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/20261017_212221` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@6cc8a2d] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 427 | 14 | stall: elbow_flex.pos (gap 4 deg) |  |
+| `rollout_logs/20261017_212355` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@6cc8a2d] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 437 | 14 | stall: elbow_flex.pos (gap 5 deg) |  |
+| `rollout_logs/20261017_213233` | dataset ep 25,30 | FLUX+flux3-chess-lora | Move the figure from c3 at 6cm to D5 at 10 cm | 2 | 904 | 30 | end of data |  |
+| `rollout_logs/20261017_213357` | real arm | FLUX+flux3-chess-lora | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 216 | 7 | stall: shoulder_lift.pos (gap 4 deg) |  |
+| `rollout_logs/20261017_213546` | real arm | FLUX+flux3-chess-lora | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 113 | 4 | stall: shoulder_lift.pos (gap 4 deg) |  |
+| `rollout_logs/20261017_213819` | real arm | FLUX+flux3-chess-lora | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/20261017_214005` | real arm | FLUX+flux3-chess-lora | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/20261017_224514` | dataset ep 25,30 | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@ef78fbb] | Move the figure from c3 at 6cm to D5 at 10 cm | 2 | 904 | 30 | end of data |  |
+| `rollout_logs/20261017_224651` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@ef78fbb] | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/20261017_224718` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@ef78fbb] | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/20261017_225336` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@ef78fbb] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 130 | 5 | stall: elbow_flex.pos (gap 4 deg) |  |
+| `rollout_logs/20261017_225418` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@ef78fbb] | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/20261017_225541` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@ef78fbb] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 51 | 2 | stall: shoulder_lift.pos (gap 4 deg) |  |
+| `rollout_logs/20261017_225939` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu [norm: flux3-chess-lora-ownstats-4gpu@ef78fbb] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 910 | 29 | stall: shoulder_lift.pos (gap 5 deg) |  |
+| `rollout_logs/eval_mediannorm/20261017_230547` | dataset ep 25,30 | FLUX [norm: multimodalart/flux-3-action-so101-sim@09edebb (median new-calibration SO-101 dataset stats)] | Move the figure from c3 at 6cm to D5 at 10 cm | 2 | 904 | 30 | end of data |  |
+| `rollout_logs/eval_hold_25_30/20261017_230709` | dataset ep 25,30 | hold | Move the figure from c3 at 6cm to D5 at 10 cm | 2 | 904 | 30 | end of data |  |
+| `rollout_logs/20261017_230748` | dry run | FLUX [norm: multimodalart/flux-3-action-so101-sim@09edebb (median new-calibration SO-101 dataset stats)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 119 | 4 | runaway: elbow_flex.pos commanded -64 (range -33..97) |  |
+| `rollout_logs/20261017_230816` | real arm | FLUX [norm: multimodalart/flux-3-action-so101-sim@09edebb (median new-calibration SO-101 dataset stats)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 600 | 19 | time |  |
+| `rollout_logs/real_mediannorm_2/20261017_231039` | real arm | FLUX [norm: multimodalart/flux-3-action-so101-sim@09edebb (median new-calibration SO-101 dataset stats)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 407 | 13 | stall: shoulder_lift.pos (gap 4 deg) |  |
+| `rollout_logs/eval_lora2500_mediannorm/20261018_001113` | dataset ep 25,30 | FLUX+flux3-chess-lora [norm: multimodalart/flux-3-action-so101-sim@09edebb (median new-calibration SO-101 dataset stats)] | Move the figure from c3 at 6cm to D5 at 10 cm | 2 | 904 | 30 | end of data |  |
+| `rollout_logs/dry_lora2500_mediannorm/20261018_001235` | dry run | FLUX+flux3-chess-lora [norm: multimodalart/flux-3-action-so101-sim@09edebb (median new-calibration SO-101 dataset stats)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 118 | 4 | runaway: elbow_flex.pos commanded -64 (range -33..97) |  |
+| `rollout_logs/real_lora2500_mediannorm/20261018_001257` | real arm | FLUX+flux3-chess-lora [norm: multimodalart/flux-3-action-so101-sim@09edebb (median new-calibration SO-101 dataset stats)] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 219 | 7 | runaway: shoulder_lift.pos commanded -134 (range -104..42) |  |
+| `rollout_logs/eval_ownstats4gpu_ext/20261018_021220` | dataset ep 25,30 | FLUX+flux3-chess-lora-ownstats-4gpu-ext [norm: flux3-chess-lora-ownstats-4gpu-ext@a555c08] | Move the figure from c3 at 6cm to D5 at 10 cm | 2 | 904 | 30 | end of data |  |
+| `rollout_logs/dry_ownstats4gpu_ext/20261018_021404` | dry run | FLUX+flux3-chess-lora-ownstats-4gpu-ext [norm: flux3-chess-lora-ownstats-4gpu-ext@a555c08] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 90 | 3 | runaway: shoulder_lift.pos commanded 75 (range -104..42) |  |
+| `rollout_logs/real_ownstats4gpu_ext/20261018_021431` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu-ext [norm: flux3-chess-lora-ownstats-4gpu-ext@a555c08] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 572 | 18 | stall: shoulder_lift.pos (gap 4 deg) |  |
+| `rollout_logs/real_ownstats4gpu_ext_2/20261018_021726` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu-ext [norm: flux3-chess-lora-ownstats-4gpu-ext@a555c08] | Move the figure from c3 at 6cm to D5 at 10 cm | 1 | 241 | 8 | stall: shoulder_lift.pos (gap 4 deg) |  |
+| `rollout_logs/real_ownstats4gpu_ext_noguard/20261018_022247` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu-ext [norm: flux3-chess-lora-ownstats-4gpu-ext@a555c08] | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/real_ownstats4gpu_ext_noguard/20261018_022355` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu-ext [norm: flux3-chess-lora-ownstats-4gpu-ext@a555c08] | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/real_ownstats4gpu_ext_noguard/20261018_022459` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu-ext [norm: flux3-chess-lora-ownstats-4gpu-ext@a555c08] | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/real_ownstats4gpu_ext_noguard/20261018_022606` | real arm | FLUX+flux3-chess-lora-ownstats-4gpu-ext [norm: flux3-chess-lora-ownstats-4gpu-ext@a555c08] | Move the figure from c3 at 6cm to D5 at 10 cm | 0 | 0 | 0 | (no result) |  |
+| `rollout_logs/dry_28moves_b1b4_debug/20261018_044401` | dry run | FLUX+flux3-chess-lora-28moves [norm: flux3-chess-lora-28moves@24a1fae] | Move the object from b1 to b4 | 0 | 0 | 0 | (no result) | yes |
+| `rollout_logs/dry_28moves_b1b4_debug/20261018_044427` | dry run | FLUX+flux3-chess-lora-28moves [norm: flux3-chess-lora-28moves@24a1fae] | Move the object from b1 to b4 | 1 | 120 | 4 | time | yes |
+| `rollout_logs/real_28moves_b1b4_debug/20261018_044505` | real arm | FLUX+flux3-chess-lora-28moves [norm: flux3-chess-lora-28moves@24a1fae] | Move the object from b1 to b4 | 1 | 117 | 4 | stall: elbow_flex.pos (gap 5 deg) | yes |
+| `rollout_logs/offline_28moves_b1b4_prompts/20261018_044535` | dataset ep 0 | FLUX+flux3-chess-lora-28moves [norm: flux3-chess-lora-28moves@24a1fae] | Move the object from b1 to b4 | 1 | 150 | 5 | time | yes |
+| `rollout_logs/offline_28moves_b1b4_prompts/20261018_044553` | dataset ep 0 | FLUX+flux3-chess-lora-28moves [norm: flux3-chess-lora-28moves@24a1fae] | Move the figure from b1 at 2 cm to b4 at 8 cm | 1 | 150 | 5 | time | yes |
+| `rollout_logs/real_28moves_b1b4_debug/20261018_044846` | real arm | FLUX+flux3-chess-lora-28moves [norm: flux3-chess-lora-28moves@24a1fae] | Move the object from b1 to b4 | 1 | 103 | 4 | stall: shoulder_lift.pos (gap 5 deg) | yes |
+| `rollout_logs/real_28moves_b1b4_debug/20261018_050427` | real arm | FLUX+flux3-chess-lora-28moves [norm: flux3-chess-lora-28moves@24a1fae] | move the figure from b1 to b4 | 1 | 98 | 4 | stall: shoulder_lift.pos (gap 5 deg) | yes |
+| `rollout_logs/real_28moves_a1a4_debug/20261018_050917` | real arm | FLUX+flux3-chess-lora-28moves [norm: flux3-chess-lora-28moves@24a1fae] | move the figure from a1 at 2 cm to a4 at 8 cm | 1 | 100 | 4 | stall: shoulder_lift.pos (gap 5 deg) | yes |
+| `rollout_logs/real_28moves_step2000_a1a4_debug/20261018_051805` | real arm | FLUX+flux3-chess-lora-28moves/checkpoints/002000/pretrained_model_ema [norm: flux3-chess-lora-28moves@24a1fae] | move the figure from a1 at 2 cm to a4 at 8 cm | 1 | 600 | 19 | time | yes |
+| `rollout_logs/real_28moves_step2000_10steps_a1a4_debug/20261018_052733` | real arm | FLUX+flux3-chess-lora-28moves/checkpoints/002000/pretrained_model_ema [norm: flux3-chess-lora-28moves@24a1fae] [10 steps/plan] | move the figure from a1 at 2 cm to a4 at 8 cm | 1 | 468 | 47 | stall: shoulder_lift.pos (gap 4 deg) | yes |
 
 ## Testing
 
