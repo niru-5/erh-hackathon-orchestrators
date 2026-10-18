@@ -151,7 +151,7 @@ a 30 Hz control loop (the GPU is allocated per call, with queueing).
 
 ### Sessions and budget
 
-The Space only runs while we work with it. Total spend is capped at **$20**, about 8 h of A100 ($2.50/h).
+The Space only runs while we work with it. Total spend is capped at **$35** (raised from $20 on 2026-10-18), about 14 h of A100 ($2.50/h).
 We use `a100-large` because Hugging Face had no free `l40sx1` (48 GB, $1.80/h) on 2026-10-17 ("Scheduling
 failure: not enough hardware capacity"). `start --hardware l40sx1` switches back when there is capacity.
 

@@ -228,7 +228,7 @@ def main() -> None:
     parser.add_argument(
         "--hardware", default="a100-large", choices=sorted(PRICES), help="GPU flavor (default a100-large)"
     )
-    parser.add_argument("--budget", type=float, default=20.0, help="max estimated total spend in $ (default 20)")
+    parser.add_argument("--budget", type=float, default=35.0, help="max estimated total spend in $ (default 35)")
     parser.add_argument(
         "--sleep-time", type=int, default=900, help="backstop: idle seconds before it sleeps (default 900)"
     )
