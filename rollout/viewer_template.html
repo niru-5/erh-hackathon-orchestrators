@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__ROLLOUT_TITLE__</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --fg: #1d1f21; --muted: #6b6f76; --line: #e3e3df; --grid: #ececea;
+  --state: #1d1f21; --sent: #c2410c; --plan-a: #2563eb; --plan-b: #0d9488; --tail: #94a3b8;
+  --limit: rgba(100, 116, 139, 0.10); --warn: #b45309; --warn-bg: #fef3c7; --stop: #b91c1c; --stop-bg: #fee2e2;
+  --info-bg: #eef2ff; --cursor: #db2777; --sel: #fdf2f8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111315; --panel: #1a1d20; --fg: #e6e6e3; --muted: #9aa0a6; --line: #2c3035; --grid: #24282c;
+    --state: #e6e6e3; --sent: #fb923c; --plan-a: #60a5fa; --plan-b: #2dd4bf; --tail: #64748b;
+    --limit: rgba(148, 163, 184, 0.10); --warn: #fbbf24; --warn-bg: #3a2c0b; --stop: #f87171; --stop-bg: #3b1515;
+    --info-bg: #1e2340; --cursor: #f472b6; --sel: #2a1a24;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111315; --panel: #1a1d20; --fg: #e6e6e3; --muted: #9aa0a6; --line: #2c3035; --grid: #24282c;
+  --state: #e6e6e3; --sent: #fb923c; --plan-a: #60a5fa; --plan-b: #2dd4bf; --tail: #64748b;
+  --limit: rgba(148, 163, 184, 0.10); --warn: #fbbf24; --warn-bg: #3a2c0b; --stop: #f87171; --stop-bg: #3b1515;
+  --info-bg: #1e2340; --cursor: #f472b6; --sel: #2a1a24;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1400px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 18px; margin: 0 0 4px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+.muted { color: var(--muted); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+select, button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+.badge.stop { background: var(--stop-bg); color: var(--stop); }
+.badge.ok { background: var(--info-bg); color: var(--plan-a); }
+details summary { cursor: pointer; color: var(--muted); }
+.findings { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.findings li { padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.findings li.warn { background: var(--warn-bg); color: var(--warn); }
+.findings li.stop { background: var(--stop-bg); color: var(--stop); font-weight: 600; }
+.findings li.info { background: var(--info-bg); }
+.transport { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.transport input[type=range] { flex: 1 1 240px; accent-color: var(--cursor); }
+.readout { font-variant-numeric: tabular-nums; }
+.views { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.pair { display: flex; gap: 2px; }
+.pair > div, .canvas { position: relative; background: var(--grid); border-radius: 4px; overflow: hidden; flex: 1; }
+.pair img, .canvas img { display: block; width: 100%; height: 100%; object-fit: fill; }
+.empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 8px; color: var(--muted); font-size: 12px; }
+.caption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 8px; }
+.chart svg { width: 100%; height: 150px; display: block; cursor: crosshair; }
+.chart .title { display: flex; justify-content: space-between; font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+.strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(96px, 1fr); gap: 4px; overflow-x: auto; padding-bottom: 4px; }
+.strip .col { cursor: pointer; border: 2px solid transparent; border-radius: 4px; padding: 2px; }
+.strip .col.now { border-color: var(--cursor); }
+.strip .col.tail { opacity: .55; }
+.strip .cell { aspect-ratio: var(--canvas-aspect); position: relative; background: var(--grid); margin-bottom: 2px; }
+.strip .cell img { width: 100%; height: 100%; display: block; object-fit: fill; }
+.strip .lbl { font-size: 11px; color: var(--muted); text-align: center; }
+.inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 12px; }
+th, td { text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+tr.sel td { background: var(--sel); }
+tbody tr { cursor: pointer; }
+td.bad { color: var(--warn); font-weight: 600; }
+.tablewrap { overflow-x: auto; }
+kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+@media (max-width: 640px) { .charts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1 id="title"></h1>
+      <div class="muted" id="subtitle"></div>
+    </div>
+    <div><label class="muted">Episode <select id="episode"></select></label> <span id="stop"></span></div>
+  </header>
+
+  <section class="panel">
+    <h2>Findings</h2>
+    <ul class="findings" id="findings"></ul>
+    <details style="margin-top:8px"><summary>Run arguments</summary><pre class="mono" id="args"></pre></details>
+  </section>
+
+  <section class="panel">
+    <div class="transport">
+      <button id="play" title="space">▶ Play</button>
+      <button id="prevPlan" title="[">⏮ plan</button>
+      <button id="prev" title="←">◀</button>
+      <button id="next" title="→">▶</button>
+      <button id="nextPlan" title="]">plan ⏭</button>
+      <select id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+      <input type="range" id="scrub" min="0" value="0">
+      <span class="readout mono" id="where"></span>
+    </div>
+    <div class="caption"><kbd>space</kbd> play · <kbd>←</kbd><kbd>→</kbd> tick · <kbd>[</kbd><kbd>]</kbd> plan · click a chart, a table row or a frame to jump</div>
+  </section>
+
+  <section class="views">
+    <div class="panel">
+      <h2>Cameras at this tick</h2>
+      <div class="pair" id="actual"></div>
+      <div class="caption" id="actualCap"></div>
+    </div>
+    <div class="panel">
+      <h2>What the model imagined for this tick</h2>
+      <div class="canvas" id="imagined"></div>
+      <div class="caption" id="imaginedCap"></div>
+    </div>
+    <div class="panel">
+      <h2>What the model was given (this plan)</h2>
+      <div class="inputs" id="inputs"></div>
+      <div class="caption" id="inputsCap"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Imagined vs. actual, this plan</h2>
+    <div class="strip" id="strip"></div>
+    <div class="caption">Top: the model's imagined frame for that tick. Bottom: what the cameras then saw (scene | wrist). Faded columns lie past the replan point: imagined but never executed.</div>
+  </section>
+
+  <section class="panel">
+    <h2>Joints</h2>
+    <div class="legend">
+      <span><i style="border-color:var(--state)"></i>measured state</span>
+      <span><i style="border-color:var(--sent);border-top-style:dashed"></i>sent to the arm</span>
+      <span><i style="border-color:var(--plan-a)"></i><i style="border-color:var(--plan-b);margin-left:-2px"></i>plan (executed part)</span>
+      <span><i style="border-color:var(--tail);border-top-style:dotted"></i>plan tail (not executed)</span>
+      <span><i style="border-color:var(--limit);border-top-width:8px"></i>joint limits</span>
+    </div>
+    <div class="charts" id="charts"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Plans</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>plan</th><th>tick</th><th>time s</th><th>request ms</th><th>inference ms</th><th>future decode ms</th><th>jump °</th><th>drift °</th><th>clamped</th><th>beyond limits</th></tr></thead>
+      <tbody id="plans"></tbody>
+    </table></div>
+    <div class="caption" id="planHelp"></div>
+  </section>
+</main>
+
+<script id="rollout-data" type="application/json">__ROLLOUT_DATA__</script>
+<script>
+const DATA = JSON.parse(document.getElementById("rollout-data").textContent);
+const SPEC = DATA.spec || {};
+const FPS = SPEC.fps || 30;
+const CAMS = SPEC.camera_keys || ["scene", "wrist"];
+const HW = SPEC.image_hw || [256, 256];
+const NS = "http://www.w3.org/2000/svg";
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+document.documentElement.style.setProperty("--canvas-aspect", `${HW[1] * CAMS.length} / ${HW[0]}`);
+
+let ep = null, pos = 0, playing = false, timer = null;
+
+$("title").textContent = DATA.run;
+$("subtitle").textContent = `${SPEC.name || "model"} · task: “${DATA.args.task || "?"}”`;
+$("args").textContent = JSON.stringify(DATA.args, null, 2);
+$("planHelp").textContent = `jump: first action vs the last command sent before the plan (flagged > ${DATA.thresholds.jump_deg}°). drift: measured state vs the plan's last executed action (flagged > ${DATA.thresholds.drift_deg}°).`;
+DATA.episodes.forEach((e, i) => $("episode").add(new Option(`${e.episode} (${e.ticks.length} ticks)`, i)));
+$("episode").onchange = () => selectEpisode(+$("episode").value);
+
+const pad = (n, w) => String(n).padStart(w, "0");
+const frameUrl = (cam, tick) => ep.frames[cam] ? `${ep.frames[cam]}${pad(tick, 5)}.jpg` : null;
+const fmt = (v, d = 0) => (v === undefined || v === null || Number.isNaN(v)) ? "–" : Number(v).toFixed(d);
+
+function img(url, alt) {
+  const box = document.createElement("div");
+  box.style.aspectRatio = `${HW[1]} / ${HW[0]}`;
+  if (url) {
+    const im = new Image(); im.src = url; im.alt = alt;
+    im.onerror = () => { im.remove(); box.appendChild(empty("no frame")); };
+    box.appendChild(im);
+  } else box.appendChild(empty(alt));
+  return box;
+}
+function empty(text) { const d = document.createElement("div"); d.className = "empty"; d.textContent = text; return d; }
+
+function planAt(tick) {
+  let found = null;
+  for (const p of ep.plans) { if (p.tick <= tick) found = p; else break; }
+  return found;
+}
+
+function selectEpisode(i) {
+  ep = DATA.episodes[i];
+  ep.plans.sort((a, b) => a.tick - b.tick);
+  $("scrub").max = Math.max(ep.ticks.length - 1, 0);
+  const stopped = ep.result.stopped_by || "";
+  $("stop").innerHTML = "";
+  if (stopped) {
+    const b = document.createElement("span");
+    b.className = "badge " + (/runaway|stall/.test(stopped) ? "stop" : "ok");
+    b.textContent = stopped; $("stop").appendChild(b);
+  }
+  const list = $("findings"); list.innerHTML = "";
+  if (!ep.findings.length) list.appendChild(Object.assign(document.createElement("li"), { className: "info", textContent: "nothing flagged" }));
+  for (const f of ep.findings) {
+    const li = document.createElement("li"); li.className = f.level; li.textContent = f.text;
+    li.onclick = () => seekTick(f.tick); list.appendChild(li);
+  }
+  buildCharts(); buildTable(); seek(0);
+}
+
+function seekTick(tick) {
+  const i = ep.ticks.findIndex((t) => t.tick >= tick);
+  seek(i < 0 ? ep.ticks.length - 1 : i);
+}
+function seek(i) {
+  pos = Math.max(0, Math.min(i, ep.ticks.length - 1));
+  render();
+}
+
+function render() {
+  const t = ep.ticks[pos]; if (!t) return;
+  const tick = t.tick, plan = planAt(tick);
+  $("scrub").value = pos;
+  const k = plan ? tick - plan.tick : null;
+  $("where").textContent = `tick ${tick} · ${(tick / FPS).toFixed(2)} s · plan ${plan ? plan.plan : "–"}${plan ? ` (+${k})` : ""}`;
+
+  // cameras now
+  const actual = $("actual"); actual.innerHTML = "";
+  CAMS.forEach((c) => actual.appendChild(img(frameUrl(c, tick), ep.frames[c] ? "" : "run with --debug to record camera frames")));
+  $("actualCap").textContent = CAMS.join(" | ") + (ep.frames[CAMS[0]] ? " — at the model's input size" : "");
+
+  // imagined
+  const im = $("imagined"); im.innerHTML = ""; im.style.aspectRatio = `${HW[1] * CAMS.length} / ${HW[0]}`;
+  const fut = plan && plan.future ? plan.future.frames : null;
+  const j = k === null ? -1 : k - 1;
+  if (!fut) im.appendChild(empty(plan ? "no imagined frames (not FLUX, or run without --debug)" : "no plan yet"));
+  else if (j < 0) im.appendChild(empty("this tick is the plan's present: the frames to the right are its inputs"));
+  else if (j >= fut.length) im.appendChild(empty("beyond the imagined horizon"));
+  else { const x = new Image(); x.src = fut[j]; im.appendChild(x); }
+  $("imaginedCap").textContent = fut ? `plan ${plan.plan}, imagined frame ${j} of ${fut.length} (after action ${j})` : "";
+
+  // inputs
+  const inp = $("inputs"); inp.innerHTML = "";
+  if (plan && plan.inputs) {
+    const positions = Object.keys(plan.inputs[CAMS[0]] || {}).map(Number).sort((a, b) => a - b);
+    for (const p of positions) for (const c of CAMS) {
+      const wrap = document.createElement("div");
+      wrap.appendChild(img(plan.inputs[c][p], ""));
+      const lbl = document.createElement("div"); lbl.className = "caption";
+      lbl.textContent = `${c}, window pos ${p} (tick ${plan.tick - (SPEC.n_obs_steps - 1) + p})`;
+      wrap.appendChild(lbl); inp.appendChild(wrap);
+    }
+    $("inputsCap").textContent = `task “${plan.task}”`;
+  } else { inp.appendChild(empty("run with --debug to record the model inputs")); $("inputsCap").textContent = ""; }
+
+  renderStrip(plan, k);
+  for (const ch of charts) ch.cursor(tick);
+  for (const row of $("plans").children) row.classList.toggle("sel", plan && +row.dataset.plan === plan.plan);
+  preload(tick);
+}
+
+let stripPlan = null;
+function renderStrip(plan, k) {
+  const strip = $("strip");
+  if (plan !== stripPlan) {
+    stripPlan = plan; strip.innerHTML = "";
+    const fut = plan && plan.future ? plan.future.frames : null;
+    if (!fut) { strip.appendChild(empty(plan ? "no imagined frames for this plan" : "")); strip.style.minHeight = "40px"; return; }
+    const executed = SPEC.n_action_steps || 32;
+    for (let j = 0; j < fut.length; j += 4) {
+      const col = document.createElement("div"); col.className = "col" + (j >= executed ? " tail" : "");
+      col.dataset.j = j;
+      const tick = plan.tick + 1 + j;
+      const top = document.createElement("div"); top.className = "cell";
+      top.appendChild(Object.assign(new Image(), { src: fut[j], alt: "" }));
+      const bottom = document.createElement("div"); bottom.className = "cell";
+      bottom.style.display = "flex"; bottom.style.gap = "1px";
+      const reached = ep.ticks.some((t) => t.tick === tick);
+      if (ep.frames[CAMS[0]] && reached) CAMS.forEach((c) => {
+        const im = new Image(); im.src = frameUrl(c, tick); im.style.width = (100 / CAMS.length) + "%"; bottom.appendChild(im);
+      }); else bottom.appendChild(empty(reached ? "no frame" : "not reached"));
+      const lbl = document.createElement("div"); lbl.className = "lbl";
+      lbl.textContent = `+${j + 1} · ${((j + 1) / FPS).toFixed(2)} s`;
+      col.append(top, bottom, lbl);
+      col.onclick = () => seekTick(tick);
+      strip.appendChild(col);
+    }
+  }
+  for (const col of strip.children) {
+    const j = +col.dataset.j;
+    col.classList.toggle("now", k !== null && k - 1 >= j && k - 1 < j + 4);
+  }
+}
+
+const cache = new Map();
+function preload(tick) {
+  if (!ep.frames[CAMS[0]]) return;
+  for (let d = 1; d <= 8; d++) for (const c of CAMS) {
+    const url = frameUrl(c, tick + d);
+    if (!cache.has(url)) { const im = new Image(); im.src = url; cache.set(url, im); if (cache.size > 400) cache.delete(cache.keys().next().value); }
+  }
+}
+
+// ---- joint charts ----
+let charts = [];
+function buildCharts() {
+  const root = $("charts"); root.innerHTML = ""; charts = [];
+  const lastTick = ep.ticks.length ? ep.ticks[ep.ticks.length - 1].tick : 1;
+  const lim = DATA.limits;
+  DATA.joints.forEach((name, d) => {
+    const box = document.createElement("div"); box.className = "chart";
+    const title = document.createElement("div"); title.className = "title";
+    const nm = document.createElement("b"); nm.textContent = name;
+    const val = document.createElement("span"); val.className = "mono muted";
+    title.append(nm, val);
+    const svg = document.createElementNS(NS, "svg");
+    box.append(title, svg); root.appendChild(box);
+    const W = 600, H = 150, L = 40, R = 6, T = 6, B = 18;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none");
+
+    const planned = ep.plans.map((p) => p.chunk || p.actions || null);
+    let vals = ep.ticks.flatMap((t) => [t.state[d], t.sent[d]]);
+    planned.forEach((c) => c && c.forEach((a) => vals.push(a[d])));
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (lim) {
+      lo = Math.max(lo, lim.low[d] - 30); hi = Math.min(hi, lim.high[d] + 30);
+      lo = Math.min(lo, lim.low[d]); hi = Math.max(hi, lim.high[d]);
+    }
+    if (hi - lo < 2) { lo -= 1; hi += 1; }
+    const span = hi - lo; lo -= span * 0.04; hi += span * 0.04;
+    const x = (tick) => L + (tick / Math.max(lastTick + 10, 1)) * (W - L - R);
+    const y = (v) => T + (1 - (Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (H - T - B);
+    const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
+    const path = (pts) => pts.map(([a, b], i) => `${i ? "L" : "M"}${a.toFixed(1)},${b.toFixed(1)}`).join("");
+
+    if (lim) el("rect", { x: L, width: W - L - R, y: y(lim.high[d]), height: Math.max(y(lim.low[d]) - y(lim.high[d]), 0), fill: css("--limit") });
+    for (let g = 0; g <= 4; g++) {
+      const v = lo + (hi - lo) * g / 4;
+      el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: css("--grid"), "stroke-width": 1 });
+      const tx = el("text", { x: L - 4, y: y(v) + 3, "text-anchor": "end", "font-size": 10, fill: css("--muted") }); tx.textContent = v.toFixed(0);
+    }
+    for (let s = 0; s * FPS <= lastTick; s += Math.max(1, Math.ceil(lastTick / FPS / 10))) {
+      const tx = el("text", { x: x(s * FPS), y: H - 4, "text-anchor": "middle", "font-size": 10, fill: css("--muted") }); tx.textContent = `${s}s`;
+    }
+    ep.plans.forEach((p, i) => {
+      el("line", { x1: x(p.tick), x2: x(p.tick), y1: T, y2: H - B, stroke: css("--grid"), "stroke-width": 1 });
+      const c = planned[i]; if (!c) return;
+      const n = p.executed_ticks ?? (SPEC.n_action_steps || c.length);
+      const pts = c.map((a, k) => [x(p.tick + k), y(a[d])]);
+      el("path", { d: path(pts.slice(Math.max(n - 1, 0))), fill: "none", stroke: css("--tail"), "stroke-width": 1.2, "stroke-dasharray": "2 2" });
+      el("path", { d: path(pts.slice(0, Math.max(n, 1))), fill: "none", stroke: css(i % 2 ? "--plan-b" : "--plan-a"), "stroke-width": 1.6, opacity: 0.85 });
+    });
+    el("path", { d: path(ep.ticks.map((t) => [x(t.tick), y(t.sent[d])])), fill: "none", stroke: css("--sent"), "stroke-width": 1.2, "stroke-dasharray": "4 2" });
+    el("path", { d: path(ep.ticks.map((t) => [x(t.tick), y(t.state[d])])), fill: "none", stroke: css("--state"), "stroke-width": 1.6 });
+    if (/runaway|stall/.test(ep.result.stopped_by || "")) {
+      el("line", { x1: x(lastTick), x2: x(lastTick), y1: T, y2: H - B, stroke: css("--stop"), "stroke-width": 1.5 });
+    }
+    const cur = el("line", { y1: T, y2: H - B, stroke: css("--cursor"), "stroke-width": 1.5 });
+    const toTick = (ev) => {
+      const r = svg.getBoundingClientRect();
+      return Math.round(((ev.clientX - r.left) / r.width * W - L) / (W - L - R) * Math.max(lastTick + 10, 1));
+    };
+    let dragging = false;
+    svg.onpointerdown = (ev) => { dragging = true; svg.setPointerCapture(ev.pointerId); seekTick(toTick(ev)); };
+    svg.onpointermove = (ev) => { if (dragging) seekTick(toTick(ev)); };
+    svg.onpointerup = () => { dragging = false; };
+    charts.push({
+      cursor(tick) {
+        cur.setAttribute("x1", x(tick)); cur.setAttribute("x2", x(tick));
+        const t = ep.ticks.find((q) => q.tick === tick), p = planAt(tick);
+        const c = p && (p.chunk || p.actions);
+        const planned = c && c[tick - p.tick] ? c[tick - p.tick][d] : null;
+        val.textContent = t ? `state ${fmt(t.state[d], 1)} · sent ${fmt(t.sent[d], 1)} · plan ${fmt(planned, 1)}` : "";
+      },
+    });
+  });
+}
+
+function buildTable() {
+  const body = $("plans"); body.innerHTML = "";
+  const th = DATA.thresholds;
+  for (const p of ep.plans) {
+    const tm = p.timing || {};
+    const tr = document.createElement("tr"); tr.dataset.plan = p.plan;
+    const cells = [
+      [p.plan], [p.tick], [fmt(p.tick / FPS, 2)], [fmt(tm.client_total_ms ?? p.client_total_ms)], [fmt(tm.inference_ms ?? p.inference_ms)],
+      [fmt(tm.future_decode_ms ?? p.future_decode_ms)],
+      [p.jump ? `${fmt(p.jump.deg, 1)} ${DATA.joints[p.jump.joint]}` : "–", p.jump && p.jump.deg > th.jump_deg],
+      [p.drift ? `${fmt(p.drift.deg, 1)} ${DATA.joints[p.drift.joint]}` : "–", p.drift && p.drift.deg > th.drift_deg],
+      [p.clipped ?? "–", p.clipped > 0], [p.beyond_limits ?? "–", p.beyond_limits > 0],
+    ];
+    for (const [v, bad] of cells) { const td = document.createElement("td"); td.textContent = v; if (bad) td.className = "bad"; tr.appendChild(td); }
+    tr.onclick = () => seekTick(p.tick);
+    body.appendChild(tr);
+  }
+}
+
+// ---- transport ----
+function setPlaying(on) {
+  playing = on; $("play").textContent = on ? "❚❚ Pause" : "▶ Play";
+  clearInterval(timer);
+  if (on) {
+    if (pos >= ep.ticks.length - 1) seek(0);
+    let last = performance.now(), acc = 0;
+    timer = setInterval(() => {
+      const now = performance.now(); acc += (now - last) / 1000 * FPS * +$("speed").value; last = now;
+      const steps = Math.floor(acc); acc -= steps;
+      if (steps) { if (pos + steps >= ep.ticks.length - 1) { seek(ep.ticks.length - 1); setPlaying(false); } else seek(pos + steps); }
+    }, 1000 / 60);
+  }
+}
+function jumpPlan(dir) {
+  const tick = ep.ticks[pos].tick, cur = planAt(tick);
+  const idx = cur ? ep.plans.indexOf(cur) : -1;
+  const target = dir > 0 ? ep.plans[idx + 1] : (cur && tick > cur.tick ? cur : ep.plans[idx - 1]);
+  if (target) seekTick(target.tick);
+}
+$("play").onclick = () => setPlaying(!playing);
+$("prev").onclick = () => seek(pos - 1);
+$("next").onclick = () => seek(pos + 1);
+$("prevPlan").onclick = () => jumpPlan(-1);
+$("nextPlan").onclick = () => jumpPlan(1);
+$("scrub").oninput = (e) => seek(+e.target.value);
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT" && e.target.type !== "range") return;
+  if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); seek(pos - 1); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); seek(pos + 1); }
+  else if (e.key === "[") jumpPlan(-1);
+  else if (e.key === "]") jumpPlan(1);
+});
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { buildCharts(); render(); });
+
+if (DATA.episodes.length) selectEpisode(0);
+else document.querySelector("main").appendChild(empty("this run has no ticks"));
+</script>
+</body>
+</html>

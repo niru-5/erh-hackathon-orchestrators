@@ -34,6 +34,7 @@ def encode_window(window: Window, quality: int = DEFAULT_JPEG_QUALITY) -> dict:
             key: {str(i): encode_image(image, quality) for i, image in frames.items()}
             for key, frames in window.images.items()
         },
+        **({"debug": True} if window.debug else {}),
     }
 
 
@@ -49,15 +50,29 @@ def decode_window(data: dict) -> Window:
         images={
             key: {int(i): decode_image(image) for i, image in frames.items()} for key, frames in data["images"].items()
         },
+        debug=bool(data.get("debug", False)),
     )
 
 
-def encode_plan(plan: Plan) -> dict:
-    return {"actions": plan.actions.astype(np.float32).tolist(), "timing": plan.timing, "model": plan.model}
+def encode_plan(plan: Plan, quality: int = DEFAULT_JPEG_QUALITY) -> dict:
+    data = {"actions": plan.actions.astype(np.float32).tolist(), "timing": plan.timing, "model": plan.model}
+    if plan.debug:
+        debug = dict(plan.debug)
+        if "chunk" in debug:
+            debug["chunk"] = np.asarray(debug["chunk"], np.float32).tolist()
+        if "future_frames" in debug:
+            debug["future_frames"] = [encode_image(frame, quality) for frame in debug["future_frames"]]
+        data["debug"] = debug
+    return data
 
 
 def decode_plan(data: dict) -> Plan:
     actions = np.asarray(data["actions"], dtype=np.float32)
     if actions.ndim != 2 or not np.isfinite(actions).all():
         raise ValueError("plan actions must be a finite (N, D) array")
-    return Plan(actions=actions, timing=dict(data.get("timing", {})), model=data.get("model", ""))
+    debug = dict(data.get("debug") or {})
+    if "chunk" in debug:
+        debug["chunk"] = np.asarray(debug["chunk"], dtype=np.float32)
+    if "future_frames" in debug:
+        debug["future_frames"] = np.stack([decode_image(frame) for frame in debug["future_frames"]])
+    return Plan(actions=actions, timing=dict(data.get("timing", {})), model=data.get("model", ""), debug=debug)

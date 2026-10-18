@@ -1,4 +1,5 @@
-"""python -m rollout run --robot {so101,dataset} --policy {URL,local:flux,local:hold} ...  (see docs/inference.md)"""
+"""python -m rollout run --robot {so101,dataset} --policy {URL,local:flux,local:hold} ...  (see docs/inference.md)
+python -m rollout view [run dir]: build the run's viewer.html (default: the latest run)"""
 
 import argparse
 import json
@@ -8,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .backends import make_backend
+from .debug import DebugRecorder
 from .history import History
 from .loop import JointLimits, RunLog, StallGuard, run_episode
 
@@ -106,8 +108,31 @@ def parse_args(argv=None) -> argparse.Namespace:
     model.add_argument("--compile", action="store_true", help="flux: torch.compile the DiT (slow first request)")
     model.add_argument("--hold-delay", type=float, default=0.0, help="hold: simulated inference seconds")
     run.add_argument("--log-dir", type=Path, default=Path("rollout_logs"))
+    run.add_argument(
+        "--debug",
+        action="store_true",
+        help="also save every camera frame, each plan's inputs and full predicted chunk and, for FLUX, the frames "
+        "it imagines (decoded on the server: adds GPU time to every plan), then build <run dir>/viewer.html",
+    )
     run.add_argument("-v", "--verbose", action="store_true")
+    view = sub.add_parser("view", help="build viewer.html for a run (most useful after run --debug)")
+    view.add_argument("run_dir", nargs="?", type=Path, help="a rollout_logs/... run directory (default: the latest)")
+    view.add_argument("--log-dir", type=Path, default=Path("rollout_logs"))
+    view.add_argument("--open", action="store_true", help="open it in the browser")
     return parser.parse_args(argv)
+
+
+def view(args) -> int:
+    from . import viewer
+
+    run = args.run_dir or viewer.latest_run(args.log_dir)
+    out = viewer.build(run)
+    print(out)
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(out.resolve().as_uri())
+    return 0
 
 
 def _backend(args):
@@ -145,6 +170,8 @@ def _cuda() -> bool:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.command == "view":
+        return view(args)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
@@ -202,7 +229,11 @@ def main(argv=None) -> int:
     if limits:
         logger.info("joint limits: %s", limits.describe())
     log = RunLog(args.log_dir / datetime.now().strftime("%Y%m%d_%H%M%S"))
-    log.summary({"args": {k: str(v) for k, v in vars(args).items()}, "spec": spec.to_dict()})
+    header = {"args": {k: str(v) for k, v in vars(args).items()}, "spec": spec.to_dict()}
+    if limits:
+        header["limits"] = {"low": limits.low, "high": limits.high}
+    log.summary(header)
+    debug = DebugRecorder(log.directory, spec) if args.debug else None
     history = History(spec, resize_images=not args.full_res_images)
     max_ticks = round(args.episode_time * spec.fps)
 
@@ -243,6 +274,7 @@ def main(argv=None) -> int:
                 limits=limits,
                 log=log,
                 events=events,
+                debug=debug,
             )
             result = {"episode": episode, **stats.to_dict(), **robot.summary()}
             results.append(result)
@@ -260,7 +292,12 @@ def main(argv=None) -> int:
         backend.close()
         if listener is not None:
             listener.stop()
-        log.summary({"args": {k: str(v) for k, v in vars(args).items()}, "spec": spec.to_dict(), "episodes": results})
+        log.summary({**header, "episodes": results})
         log.close()
+        if debug:
+            debug.close()
+            from .viewer import build
+
+            logger.info("viewer: %s", build(log.directory))
     print(json.dumps({"logs": str(log.directory), "episodes": results}, indent=2))
     return 0

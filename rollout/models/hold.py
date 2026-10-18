@@ -20,4 +20,5 @@ class HoldModel:
         if self.delay_s:
             time.sleep(self.delay_s)
         actions = np.repeat(window.commands[-1][None], self._spec.n_action_steps, axis=0).astype(np.float32)
-        return Plan(actions, {"inference_ms": (time.perf_counter() - started) * 1e3}, self._spec.name)
+        debug = {"chunk": actions} if window.debug else {}
+        return Plan(actions, {"inference_ms": (time.perf_counter() - started) * 1e3}, self._spec.name, debug)

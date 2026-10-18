@@ -16,6 +16,7 @@ import numpy as np
 
 from .backends import Backend
 from .contract import ACTION_NAMES, PolicySpec
+from .debug import DebugRecorder
 from .history import History
 from .robots import Robot
 
@@ -230,12 +231,15 @@ def run_episode(
     events: dict | None = None,
     teacher_forcing: bool = False,
     stall_guard: StallGuard | None = None,
+    debug: DebugRecorder | None = None,
 ) -> EpisodeStats:
     """One episode with a fresh history (flux's ``policy.reset()``).
 
     ``teacher_forcing`` (recorded data only): the history records the demonstrator's command for each tick
     instead of the model's, so every plan starts from a consistent state/command history. Without it, a
     replayed recording doesn't follow the model's commands and the history drifts out of distribution.
+
+    ``debug``: also record every camera frame and each plan's full input and output (run --debug).
     """
     if teacher_forcing and not hasattr(robot, "recorded_command"):
         raise ValueError("teacher forcing needs a robot that replays recorded commands")
@@ -257,6 +261,8 @@ def run_episode(
         if observation is None:
             stats.stopped_by = "end of data"
             break
+        if debug:
+            debug.tick(episode, stats.ticks, observation)
         if stall_guard and last_goal is not None:
             stalled = stall_guard.update(observation.state, last_goal, last_pinned)
             if stalled:
@@ -267,7 +273,9 @@ def run_episode(
         history.append(observation, last_command)
         if not queue:
             request_started = time.perf_counter()
-            plan = backend.predict(history.window(task))
+            window = history.window(task)
+            window.debug = debug is not None
+            plan = backend.predict(window)
             waited = time.perf_counter() - request_started
             if plan.actions.shape != (spec.n_action_steps, len(spec.action_names)):
                 raise RuntimeError(f"plan has shape {plan.actions.shape}, expected ({spec.n_action_steps}, 6)")
@@ -279,6 +287,8 @@ def run_episode(
                 stats.inference_ms.append(plan.timing["inference_ms"])
             if log:
                 log.plan(episode=episode, plan=stats.plans, tick=stats.ticks, model=plan.model, **plan.timing)
+            if debug:
+                debug.plan(episode, stats.plans, stats.ticks, window, plan)
             logger.info(
                 "episode %d plan %d at tick %d: %.0f ms (server inference %s ms)",
                 episode,

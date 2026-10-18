@@ -47,6 +47,7 @@ class Window:
     states: np.ndarray  # (n_obs_steps, 6) measured states
     commands: np.ndarray  # (n_obs_steps, 6) command issued before each state
     images: dict[str, dict[int, np.ndarray]]  # camera -> window position -> RGB uint8 HWC (snapshots only)
+    debug: bool = False  # ask the model for Plan.debug (run --debug)
 
 
 @dataclass
@@ -56,3 +57,7 @@ class Plan:
     actions: np.ndarray  # (n_action_steps, 6) float32
     timing: dict[str, float] = field(default_factory=dict)
     model: str = ""
+    # Only when Window.debug asked for it, all optional: "chunk" (chunk_size, 6) every predicted action, executed
+    # or not; "future_frames" (T, H, W, 3) uint8 the frames a world model imagines after this window (FLUX: the
+    # side_by_side canvas, frame j = the observation after action j); "future_fps".
+    debug: dict = field(default_factory=dict)

@@ -5,6 +5,7 @@ NATTEN), see rollout/server/Dockerfile. Only imported when a flux model is reque
 """
 
 import time
+from contextlib import contextmanager
 
 import numpy as np
 import torch
@@ -97,14 +98,41 @@ class FluxModel:
         for camera, key in zip(spec.camera_keys, self._keys, strict=True):
             # uint8 (1, n, 3, H, W): flux normalizes uint8 on CPU, as its reference loader expects.
             batch[key] = torch.from_numpy(np.ascontiguousarray(frames[camera].transpose(0, 3, 1, 2)))[None].to(device)
-        with torch.inference_mode():
-            actions = self.policy.predict_action_chunk(batch)[0, : spec.n_action_steps]
+        solver_out: dict = {}
+        with torch.inference_mode(), _keep_solver_output(solver_out, enabled=window.debug):
+            chunk = self.policy.predict_action_chunk(batch)[0]
         if device.type == "cuda":
             torch.cuda.synchronize(device)
-        actions = actions.float().cpu().numpy()
+        timing = {"inference_ms": (time.perf_counter() - started) * 1e3}
+        chunk = chunk.float().cpu().numpy()
+        actions = chunk[: spec.n_action_steps]
         if not np.isfinite(actions).all():
             raise RuntimeError("policy returned non-finite actions")
-        return Plan(actions, {"inference_ms": (time.perf_counter() - started) * 1e3}, spec.name)
+        debug = {}
+        if window.debug:
+            decode_started = time.perf_counter()
+            future = self._decode_future(solver_out["x_video"])
+            debug = {"chunk": chunk, "future_frames": future, "future_fps": spec.fps}
+            timing["future_decode_ms"] = (time.perf_counter() - decode_started) * 1e3
+        return Plan(actions, timing, spec.name, debug)
+
+    def _decode_future(self, tokens: torch.Tensor) -> np.ndarray:
+        """The video tokens the sampler denoised alongside the actions -> (T, H, W, 3) uint8 canvas frames.
+
+        flux_action encodes the window's future frames as one clip of their own (history.encode_windows), so the
+        predicted latents decode on their own: frame j is the observation after action j of the chunk.
+        """
+        from einops import rearrange
+        from flux_action.processing import packing
+
+        cfg, device = self.policy.config, self.policy.device
+        (h, w), t = cfg.latent_hw, packing.latent_frames(cfg.chunk_size)
+        latents = rearrange(tokens[0].float(), "(t h w) c -> c t h w", t=t, h=h, w=w)[None].to(device)
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
+            video = self.policy.video_vae.decode(latents)  # (1, 3, T, H, W) in [-1, 1]
+        content_h, content_w = packing.content_hw(cfg.camera_layout, cfg.canvas_hw)
+        video = video[0, :, :, :content_h, :content_w].float().clamp(-1, 1)
+        return ((video.permute(1, 2, 3, 0) + 1) * 127.5).round().to(torch.uint8).cpu().numpy()
 
     def _fill(self, snapshots: dict[int, np.ndarray]) -> np.ndarray:
         """(n, H, W, 3): the model reads only the snapshot positions; fill the rest with the nearest one."""
@@ -119,3 +147,32 @@ class FluxModel:
         import cv2
 
         return np.stack([cv2.resize(f, (hw[1], hw[0]), interpolation=cv2.INTER_AREA) for f in frames])
+
+
+@contextmanager
+def _keep_solver_output(store: dict, enabled: bool = True):
+    """Copy what flux_action's ODE solver returns into ``store``: ``FluxActionPolicy._sample`` keeps only the
+    action stream and drops the video stream it denoised with it. Wraps the solver functions for the duration;
+    their results are passed through untouched, so the actions don't change."""
+    if not enabled:
+        yield
+        return
+    from flux_action.inference import sampling
+
+    originals = {name: getattr(sampling, name) for name in ("cosmos_unipc_order2", "euler")}
+
+    def keeping(solver):
+        def solve(*args, **kwargs):
+            out = solver(*args, **kwargs)
+            store.update(out)
+            return out
+
+        return solve
+
+    for name, solver in originals.items():
+        setattr(sampling, name, keeping(solver))
+    try:
+        yield
+    finally:
+        for name, solver in originals.items():
+            setattr(sampling, name, solver)
