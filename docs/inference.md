@@ -666,6 +666,12 @@ request instead of 1.5 s.
   closes the gripper around it. The stall guard stopped it at 3.2 s (tick 97): shoulder_lift held at −36° vs.
   goal −31°, probably the fingertips on the board while the model pushes down to grasp. The first attempt failed
   at connect with a transient bus error (motor 2, "no status packet"); the retry seconds later worked.
+- **05:09, a1 → a4, prompt `move the figure from a1 at 2 cm to a4 at 8 cm`** (limits from
+  `niru-5/chess_dataset_a1_2cm_to_a4_8cm_20261017_214638`, piece upright on a1, arm reset to rest): pan 0 → −27°,
+  shoulder_lift −97 → +3°, elbow 93 → 50°, gripper opened to 17 %. At the stop the wrist camera is filled with the
+  piece at close range, and plan 4's imagined frame matches it. Stall guard at 3.3 s (tick 99): shoulder_lift held at
+  3° vs. goal 8°, most likely pressing against the piece. Plan 4's chunk would have **backed off with the gripper still
+  open** (lift 8 → −21°, elbow 54 → 78°, gripper 16–17 %), so even without the guard it wasn't about to grasp.
 
 **What the imagined frames show:** FLUX's imagined future matches what the cameras then saw closely in both runs.
 In plans 3–4 the imagined wrist view and the real one both show the gripper over the white paper with the two
