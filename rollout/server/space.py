@@ -159,21 +159,21 @@ def deploy(api: HfApi, args, ledger: Ledger) -> None:
         "ROLLOUT_ADAPTER": args.adapter,
         "ROLLOUT_ADAPTER_REVISION": args.adapter_revision,
         "ROLLOUT_NORMALIZATION": _normalization_json(args.normalization),
-        "ROLLOUT_N_ACTION_STEPS": str(args.n_action_steps) if args.n_action_steps else None,
+        # "0" = the checkpoint's own count; set rather than deleted: a running Space kept the deleted value
+        # through a restart (2026-10-18), while a changed value is always picked up
+        "ROLLOUT_N_ACTION_STEPS": "0" if args.default_action_steps else str(args.n_action_steps or "") or None,
     }
-    for key, value in variables.items():
-        if value:
-            api.add_space_variable(args.space_id, key, value)
-    removed = (
-        (["ROLLOUT_ADAPTER", "ROLLOUT_ADAPTER_REVISION"] if args.no_adapter else [])
-        + (["ROLLOUT_NORMALIZATION"] if args.no_normalization else [])
-        + (["ROLLOUT_N_ACTION_STEPS"] if args.default_action_steps else [])
+    removed = (["ROLLOUT_ADAPTER", "ROLLOUT_ADAPTER_REVISION"] if args.no_adapter else []) + (
+        ["ROLLOUT_NORMALIZATION"] if args.no_normalization else []
     )
-    if removed:
+    if removed:  # before the additions, so the last restart sees the final set
         existing = api.get_space_variables(args.space_id)
         for key in removed:
             if key in existing:
                 api.delete_space_variable(args.space_id, key)
+    for key, value in variables.items():
+        if value:
+            api.add_space_variable(args.space_id, key, value)
     api.request_space_hardware(args.space_id, args.hardware, sleep_time=args.sleep_time)
     if _stage(api, args.space_id) in ("PAUSED", "STOPPED"):
         api.restart_space(args.space_id)  # a hardware request doesn't unpause
