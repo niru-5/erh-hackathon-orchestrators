@@ -4,8 +4,13 @@ Small enough to run in-process on the recording laptop's CPU (rtrtwrw/act_chess_
 ~0.6 s per 100-action chunk). The checkpoint owns the contract: cameras and resolution from its
 ``input_features``, chunk length and actions per plan from its config, normalization from its saved
 processors. This is what LeRobot's own ``select_action`` does, minus the queue (rollout.loop keeps it).
+
+Goal-conditioned chess checkpoints (rtrtwrw/act_chess_goalcond_*) also take
+``observation.environment_state``: the move, encoded from the two squares in the task as their
+``chess_goal.py`` does (``from_x, from_y, to_x, to_y, dx, dy``, squares mapped to [-1, 1]).
 """
 
+import re
 import time
 
 import numpy as np
@@ -14,6 +19,16 @@ import torch
 from ..contract import ACTION_NAMES, Plan, PolicySpec, Window
 
 IMAGE_PREFIX = "observation.images."
+GOAL_KEY = "observation.environment_state"
+
+
+def chess_goal(task: str) -> np.ndarray:
+    """The 6-value move encoding of rtrtwrw's chess_goal.py, from a task naming exactly two squares."""
+    squares = re.findall(r"\b([a-h][1-8])\b", task.lower())
+    if len(squares) != 2:
+        raise ValueError(f"the task must name exactly two squares (from, to), got {squares}: {task!r}")
+    (fx, fy), (tx, ty) = ((("abcdefgh".index(s[0])) / 7 * 2 - 1, (int(s[1]) - 1) / 7 * 2 - 1) for s in squares)
+    return np.array([fx, fy, tx, ty, (tx - fx) / 2, (ty - fy) / 2], dtype=np.float32)
 
 
 class LeRobotModel:
@@ -55,6 +70,7 @@ class LeRobotModel:
         if not 1 <= steps <= chunk:
             raise ValueError(f"n_action_steps must be within 1..{chunk}")
         self.device = device
+        self.goal_conditioned = GOAL_KEY in config.input_features
         self._spec = PolicySpec(
             name=weights,
             camera_keys=tuple(key.removeprefix(IMAGE_PREFIX) for key in images),
@@ -76,6 +92,8 @@ class LeRobotModel:
         for camera in self._spec.camera_keys:
             image = window.images[camera][0]  # RGB uint8 HWC -> float CHW in [0, 1], as in the dataset
             observation[IMAGE_PREFIX + camera] = torch.from_numpy(image).permute(2, 0, 1).float() / 255
+        if self.goal_conditioned:
+            observation[GOAL_KEY] = torch.from_numpy(chess_goal(window.task))
         with torch.inference_mode():
             chunk = self.policy.predict_action_chunk(self.preprocessor(observation))
             actions = self.postprocessor(chunk)[0, : self._spec.n_action_steps]
