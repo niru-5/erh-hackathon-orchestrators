@@ -31,6 +31,7 @@ PRICES = {"l4x1": 0.80, "l40sx1": 1.80, "a100-large": 2.50}  # $/h, huggingface.
 # Files the server image needs; tests, robots and the client stay out of the Space.
 FILES = [
     "__init__.py",
+    "attention.py",
     "contract.py",
     "codec.py",
     "models/__init__.py",
@@ -175,8 +176,10 @@ def deploy(api: HfApi, args, ledger: Ledger) -> None:
         if value:
             api.add_space_variable(args.space_id, key, value)
     api.request_space_hardware(args.space_id, args.hardware, sleep_time=args.sleep_time)
-    if _stage(api, args.space_id) in ("PAUSED", "STOPPED"):
-        api.restart_space(args.space_id)  # a hardware request doesn't unpause
+    if _stage(api, args.space_id) in ("PAUSED", "STOPPED", "SLEEPING"):
+        # a hardware request doesn't unpause, and a sleeping Space only wakes on a request (2026-10-18: a deploy
+        # to a sleeping Space waited 10 min for RUNNING)
+        api.restart_space(args.space_id)
     ledger.start(args.space_id, args.hardware)
     model = (args.weights or "flux-3-action-so101") + (f" + {args.adapter}" if args.adapter else "")
     print(f"deployed https://huggingface.co/spaces/{args.space_id} on {args.hardware}: {model}")

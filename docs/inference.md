@@ -284,14 +284,29 @@ It is a single file with no network access. It shows:
   put it at the plan's end (blocked, capped by `max_relative_target`, or clamped). Commands changed before
   sending. Predicted actions outside the joint range. Why the episode stopped.
 - the cameras at the current tick, the frame the model imagined for that tick, and the inputs of the current
-  plan;
+  plan, with an **attention heatmap** over each input image (toggle with the checkbox or `a`; see below);
 - a strip of imagined vs. actual frames over the whole plan. Columns past the replan point are faded:
   imagined but never executed;
 - per-joint charts: measured state, sent goal, each plan's chunk (executed part and tail) and the joint
   limits (written to `summary.json` since this change), with a cursor you can drag;
 - the plan table: latency, inference and decode time, jump, drift, clamped commands, actions beyond the limits.
 
-Keys: space plays and pauses, ←/→ steps one tick, [ and ] jump between plans.
+Keys: space plays and pauses, ←/→ steps one tick, [ and ] jump between plans, a toggles the attention maps.
+
+**Attention maps** (`--debug`, `rollout/attention.py`): where the action tokens look in each input image, plus the
+share of their attention on each camera and on every other token group, in the caption under the inputs.
+
+- **FLUX:** the 42 action tokens' rows of the joint attention, mean over the 28 joint blocks, the 24 heads and the
+  task-conditioned denoising passes (guidance's empty-caption passes are left out). The blocks use fused attention,
+  so the server recomputes those rows from the same q and k; the actions don't change. Each snapshot is an 8×16 latent
+  grid over the side-by-side canvas, so a camera gets an 8×8 map (one cell = 32×32 px). Shares: each camera, task
+  text (including its padding), imagined video, the actions themselves, action history. Needs the server code from
+  this change and an uncompiled DiT (no `ROLLOUT_COMPILE`); otherwise the plan carries `attention_error`.
+- **ACT:** the decoder's cross-attention from the action queries to the encoder tokens (nn.MultiheadAttention returns
+  it head-averaged), mean over the queries: one 15×20 map per 480×640 camera, plus latent, state and goal.
+
+The heatmap is relative: red marks the plan's most-attended image patch across all cameras. Attention shows what the
+model reads, not why it acts; treat it as a hint, not an explanation.
 
 ### Actions per plan
 

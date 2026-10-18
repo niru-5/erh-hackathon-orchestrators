@@ -106,7 +106,12 @@ class FluxModel:
             # uint8 (1, n, 3, H, W): flux normalizes uint8 on CPU, as its reference loader expects.
             batch[key] = torch.from_numpy(np.ascontiguousarray(frames[camera].transpose(0, 3, 1, 2)))[None].to(device)
         solver_out: dict = {}
-        with torch.inference_mode(), _keep_solver_output(solver_out, enabled=window.debug):
+        attention: dict = {}
+        with (
+            torch.inference_mode(),
+            _keep_solver_output(solver_out, enabled=window.debug),
+            _record_attention(self.policy, attention, enabled=window.debug),
+        ):
             chunk = self.policy.predict_action_chunk(batch)[0]
         if device.type == "cuda":
             torch.cuda.synchronize(device)
@@ -125,7 +130,44 @@ class FluxModel:
                 logger.exception("decoding the imagined future failed")
                 debug["future_error"] = f"{type(error).__name__}: {error}"[:500]
             timing["future_decode_ms"] = (time.perf_counter() - decode_started) * 1e3
+            try:
+                debug["attention"] = self._attention_maps(attention)
+            except Exception as error:
+                logger.exception("summarizing the attention failed")
+                debug["attention_error"] = f"{type(error).__name__}: {error}"[:500]
         return Plan(actions, timing, spec.name, debug)
+
+    def _attention_maps(self, recorded: dict) -> dict:
+        """What _record_attention summed -> rollout/attention.py's format. The camera history tokens are one
+        latent grid per snapshot, ``(t h w)`` order, the side_by_side canvas split into equal columns per camera."""
+        from ..attention import summary
+
+        if "error" in recorded:
+            raise RuntimeError(recorded["error"])
+        if not recorded.get("passes"):
+            raise RuntimeError("no attention was recorded")
+        weights = (recorded["sum"] / recorded["passes"]).cpu().numpy()
+        text, video, history, action, action_history = recorded["lengths"]
+        (h, w), positions, cameras = self.policy.config.latent_hw, self._spec.snapshot_indices, self._spec.camera_keys
+        if history != len(positions) * h * w:
+            raise RuntimeError(f"{history} camera history tokens, expected {len(positions)} x {h} x {w}")
+        start = text + video
+        grids = weights[start : start + history].reshape(len(positions), h, w)
+        columns = w // len(cameras)
+        images = {
+            camera: {p: grids[i, :, j * columns : (j + 1) * columns] for i, p in enumerate(positions)}
+            for j, camera in enumerate(cameras)
+        }
+        bounds = np.cumsum([0, text, video, history, action, action_history])
+        other = {
+            name: weights[bounds[k] : bounds[k + 1]].sum()
+            for k, name in ((0, "task text"), (1, "imagined video"), (3, "actions"), (4, "action history"))
+        }
+        about = (
+            f"FLUX: the {action} action tokens' attention, mean over {recorded['blocks']} joint blocks, all heads and "
+            f"{recorded['passes'] // recorded['blocks']} task-conditioned denoising passes"
+        )
+        return summary(images, other, about)
 
     def _decode_future(self, tokens: torch.Tensor) -> np.ndarray:
         """The video tokens the sampler denoised alongside the actions -> (T, H, W, 3) uint8 canvas frames.
@@ -191,3 +233,60 @@ def _keep_solver_output(store: dict, enabled: bool = True):
     finally:
         for name, solver in originals.items():
             setattr(sampling, name, solver)
+
+
+@contextmanager
+def _record_attention(policy, store: dict, enabled: bool = True):
+    """Sum into ``store`` how the action tokens attend over the joint sequence [task text | imagined video |
+    camera history | actions | action history] in every joint block of the prepared BF16 DiT (mean over heads and
+    action tokens), on the task-conditioned passes only (guidance also runs an empty-caption pass per step).
+
+    The blocks use fused attention, which never forms the weights, so a hook recomputes the action rows from the
+    same (normed, rotated) q and k; the block outputs are untouched, so the actions don't change."""
+    if not enabled:
+        yield
+        return
+    dit = policy.dit
+    if not hasattr(dit, "forward_prepared") or getattr(dit, "_compiled_hot", None) is not None:
+        store["error"] = "attention maps need the uncompiled prepared DiT (a CUDA server without ROLLOUT_COMPILE)"
+        yield
+        return
+    original = dit.forward_prepared
+    current: dict = {}
+
+    def forward_prepared(request, step, **inputs):
+        unconditional = policy._prepared_text_cache.get("")  # the empty caption's prepared text, shared by request
+        if unconditional is None or request.txt is not unconditional.txt:
+            current["lengths"] = (
+                request.txt_len,
+                request.video_len,
+                request.video_cond_len,
+                request.action_len,
+                request.action_cond_len,
+            )
+        try:
+            return original(request, step, **inputs)
+        finally:
+            current.clear()
+
+    def on_attention(module, args, output):
+        lengths = current.get("lengths")
+        if lengths is None:
+            return
+        q, k = args[0], args[1]  # (batch, heads, tokens, head_dim)
+        start = sum(lengths[:3])
+        rows = q[:, :, start : start + lengths[3]].float()
+        weights = (rows @ k.float().transpose(-1, -2) * rows.shape[-1] ** -0.5).softmax(-1).mean(dim=(0, 1, 2))
+        store["sum"] = weights if "sum" not in store else store["sum"] + weights
+        store["passes"] = store.get("passes", 0) + 1
+        store["lengths"] = lengths
+
+    store["blocks"] = len(dit.single_blocks)
+    dit.forward_prepared = forward_prepared
+    handles = [block.attention.register_forward_hook(on_attention) for block in dit.single_blocks]
+    try:
+        yield
+    finally:
+        del dit.forward_prepared  # back to the class method
+        for handle in handles:
+            handle.remove()

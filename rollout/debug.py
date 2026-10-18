@@ -4,7 +4,9 @@
     plans/ep000_0003/<camera>_<pos>.jpg      the snapshot images the model got for plan 3
     plans/ep000_0003/future/000.jpg          FLUX: the frames it imagined (frame j = after action j)
     plans.jsonl                              per plan: tick, task, state/command history, executed actions,
-                                             the full predicted chunk, timing, and the image paths above
+                                             the full predicted chunk, timing, the image paths above and
+                                             where the action tokens attended in each input image
+                                             (FLUX and ACT, rollout/attention.py)
 
 Images are written on a background thread so the control loop keeps its tick rate.
 ``python -m rollout view <run dir>`` turns the run into viewer.html.
@@ -65,6 +67,11 @@ class DebugRecorder:
         if "future_error" in plan.debug:
             record["future_error"] = plan.debug["future_error"]
             logger.warning("plan %d: no imagined frames: %s", number, plan.debug["future_error"])
+        if "attention" in plan.debug:
+            record["attention"] = plan.debug["attention"]
+        if "attention_error" in plan.debug:
+            record["attention_error"] = plan.debug["attention_error"]
+            logger.warning("plan %d: no attention maps: %s", number, plan.debug["attention_error"])
         self._plans.write(json.dumps(_jsonable(record)) + "\n")
         self._plans.flush()
 

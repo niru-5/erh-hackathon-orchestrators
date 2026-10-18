@@ -70,6 +70,9 @@ details summary { cursor: pointer; color: var(--muted); }
 .inputs > div, .views > div { min-width: 0; }
 .inputs > div > div:not(.caption) { position: relative; background: var(--grid); border-radius: 4px; overflow: hidden; }
 .inputs img { display: block; width: 100%; height: 100%; object-fit: fill; }
+.inputs canvas.attn { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.panelhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.panelhead label { font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 12px; }
 th, td { text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th:first-child, td:first-child { text-align: left; }
@@ -108,7 +111,7 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
       <input type="range" id="scrub" min="0" value="0">
       <span class="readout mono" id="where"></span>
     </div>
-    <div class="caption"><kbd>space</kbd> play · <kbd>←</kbd><kbd>→</kbd> tick · <kbd>[</kbd><kbd>]</kbd> plan · click a chart, a table row or a frame to jump</div>
+    <div class="caption"><kbd>space</kbd> play · <kbd>←</kbd><kbd>→</kbd> tick · <kbd>[</kbd><kbd>]</kbd> plan · <kbd>a</kbd> attention · click a chart, a table row or a frame to jump</div>
   </section>
 
   <section class="views">
@@ -123,9 +126,13 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
       <div class="caption" id="imaginedCap"></div>
     </div>
     <div class="panel">
-      <h2>What the model was given (this plan)</h2>
+      <div class="panelhead">
+        <h2>What the model was given (this plan)</h2>
+        <label title="a"><input type="checkbox" id="attnToggle" checked> attention</label>
+      </div>
       <div class="inputs" id="inputs"></div>
       <div class="caption" id="inputsCap"></div>
+      <div class="caption" id="attnCap"></div>
     </div>
   </section>
 
@@ -253,23 +260,52 @@ function render() {
 
   // inputs
   const inp = $("inputs"); inp.innerHTML = "";
+  const attn = plan && plan.attention, showAttn = $("attnToggle").checked;
   if (plan && plan.inputs) {
     const positions = Object.keys(plan.inputs[CAMS[0]] || {}).map(Number).sort((a, b) => a - b);
     for (const p of positions) for (const c of CAMS) {
       const wrap = document.createElement("div");
-      wrap.appendChild(img(plan.inputs[c][p], ""));
+      const box = img(plan.inputs[c][p], "");
+      const grid = attn && attn.maps[c] && attn.maps[c][p];
+      if (grid && showAttn) box.appendChild(heatmap(grid));
+      wrap.appendChild(box);
       const lbl = document.createElement("div"); lbl.className = "caption";
       lbl.textContent = `${c}, pos ${p} (tick ${plan.tick - (SPEC.n_obs_steps - 1) + p})`;
       wrap.appendChild(lbl); inp.appendChild(wrap);
     }
     $("inputsCap").textContent = `task “${plan.task}”`;
   } else { inp.appendChild(empty("run with --debug to record the model inputs")); $("inputsCap").textContent = ""; }
+  $("attnCap").textContent = attn ? attentionCaption(attn)
+    : plan && plan.attention_error ? `no attention maps: ${plan.attention_error}`
+    : plan && plan.inputs ? "no attention maps for this plan (recorded since the attention update)" : "";
 
   renderStrip(plan, k);
   for (const ch of charts) ch.cursor(tick);
   for (const row of $("plans").children) row.classList.toggle("sel", plan && +row.dataset.plan === plan.plan);
   preload(tick);
 }
+
+// One canvas pixel per image token, stretched over the image (the browser smooths it): transparent where the
+// action tokens barely look, through yellow, to opaque red at the plan's most-attended image token.
+function heatmap(grid) {
+  const h = grid.length, w = grid[0].length;
+  const canvas = document.createElement("canvas"); canvas.className = "attn"; canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d"), pixels = ctx.createImageData(w, h);
+  grid.forEach((row, y) => row.forEach((v, x) => {
+    const c = Math.max(0, Math.min(1, v)), i = (y * w + x) * 4;
+    pixels.data[i] = 255; pixels.data[i + 1] = Math.round(230 * (1 - c)); pixels.data[i + 2] = 0;
+    pixels.data[i + 3] = Math.round(210 * Math.pow(c, 1.5));
+  }));
+  ctx.putImageData(pixels, 0, 0);
+  return canvas;
+}
+function attentionCaption(attn) {
+  const shares = Object.entries(attn.shares).sort((a, b) => b[1] - a[1])
+    .map(([name, v]) => `${name} ${(100 * v).toFixed(v < 0.01 ? 1 : 0)}%`).join(" · ");
+  return `Heatmap: where the action tokens attend in each image (red = this plan's most-attended image patch). ` +
+    `Share of their attention: ${shares}. ${attn.about}.`;
+}
+$("attnToggle").onchange = () => render();
 
 let stripPlan = null;
 function renderStrip(plan, k) {
@@ -440,6 +476,7 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowRight") { e.preventDefault(); seek(pos + 1); }
   else if (e.key === "[") jumpPlan(-1);
   else if (e.key === "]") jumpPlan(1);
+  else if (e.key === "a") { $("attnToggle").checked = !$("attnToggle").checked; render(); }
 });
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { buildCharts(); render(); });
 

@@ -94,10 +94,61 @@ class LeRobotModel:
             observation[IMAGE_PREFIX + camera] = torch.from_numpy(image).permute(2, 0, 1).float() / 255
         if self.goal_conditioned:
             observation[GOAL_KEY] = torch.from_numpy(chess_goal(window.task))
-        with torch.inference_mode():
-            chunk = self.policy.predict_action_chunk(self.preprocessor(observation))
-            actions = self.postprocessor(chunk)[0, : self._spec.n_action_steps]
+        cross_attention: list[torch.Tensor] = []
+        hooks = self._record_cross_attention(cross_attention) if window.debug else []
+        try:
+            with torch.inference_mode():
+                chunk = self.policy.predict_action_chunk(self.preprocessor(observation))
+                actions = self.postprocessor(chunk)[0, : self._spec.n_action_steps]
+        finally:
+            for hook in hooks:
+                hook.remove()
         actions = actions.float().cpu().numpy()
         if actions.shape != (self._spec.n_action_steps, len(ACTION_NAMES)) or not np.isfinite(actions).all():
             raise RuntimeError(f"policy returned invalid actions of shape {actions.shape}")
-        return Plan(actions, {"inference_ms": (time.perf_counter() - started) * 1e3}, self._spec.name)
+        debug = {}
+        if window.debug:
+            try:  # a debug extra must never cost the plan
+                debug["attention"] = self._attention_maps(cross_attention)
+            except Exception as error:
+                debug["attention_error"] = f"{type(error).__name__}: {error}"[:500]
+        return Plan(actions, {"inference_ms": (time.perf_counter() - started) * 1e3}, self._spec.name, debug)
+
+    def _record_cross_attention(self, store: list) -> list:
+        """ACT's decoder layers attend from the action queries to the encoder tokens with nn.MultiheadAttention,
+        which returns the head-averaged weights (batch, queries, tokens) and ACT drops them: keep them."""
+        layers = getattr(getattr(getattr(self.policy, "model", None), "decoder", None), "layers", None)
+        if layers is None:
+            return []
+        return [
+            layer.multihead_attn.register_forward_hook(lambda module, args, output: store.append(output[1]))
+            for layer in layers
+            if hasattr(layer, "multihead_attn")
+        ]
+
+    def _attention_maps(self, recorded: list) -> dict:
+        """ACT's encoder tokens: [latent, state, goal (if any), then each camera's backbone feature map, (h w)
+        order] -> rollout/attention.py's format, mean over the decoder layers and the action queries."""
+        from ..attention import summary
+
+        if not recorded or any(weights is None for weights in recorded):
+            raise RuntimeError("the decoder returned no attention weights")
+        weights = torch.stack([w.float().mean(dim=(0, 1)) for w in recorded]).mean(0).cpu().numpy()
+        config = self.policy.config
+        other = {"latent": weights[0]}
+        if config.robot_state_feature:
+            other["state"] = weights[len(other)]
+        if config.env_state_feature:
+            other["goal"] = weights[len(other)]
+        cameras = self._spec.camera_keys
+        per_camera, rest = divmod(len(weights) - len(other), len(cameras))
+        height, width = (-(-side // 32) for side in self._spec.image_hw)  # ResNet feature maps: stride 32
+        if rest or per_camera != height * width:
+            raise RuntimeError(f"{len(weights)} encoder tokens don't split into {len(cameras)} {height}x{width} maps")
+        start = len(other)
+        images = {
+            camera: {0: weights[start + i * per_camera : start + (i + 1) * per_camera].reshape(height, width)}
+            for i, camera in enumerate(cameras)
+        }
+        about = f"ACT: the {config.chunk_size} action queries' cross-attention, mean over {len(recorded)} decoder layer(s)"
+        return summary(images, other, about)

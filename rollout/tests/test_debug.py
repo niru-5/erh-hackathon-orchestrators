@@ -149,3 +149,95 @@ def test_flux_debug_imagines_future_frames_without_changing_actions():
     assert frames.std() > 0
     np.testing.assert_array_equal(traced.debug["chunk"][:32], traced.actions)
     assert traced.debug["chunk"].shape == (42, 6) and "future_decode_ms" in traced.timing
+
+
+def test_flux_attention_records_the_conditional_action_rows_and_maps_them_to_the_cameras():
+    """Stand-in for flux_action's prepared BF16 DiT (same interface): joint blocks whose ``attention`` module gets
+    the normed, rotated q and k; guidance runs an empty-caption pass before each task pass."""
+    torch = pytest.importorskip("torch")
+    from types import SimpleNamespace
+
+    import torch.nn.functional as F
+
+    from rollout.models.flux import FluxModel, _record_attention
+
+    lengths = (3, 4, 2 * 2 * 4, 5, 2)  # text, imagined video, 2 snapshots of a 2x4 latent grid, actions, history
+    heads, dim = 2, 8
+
+    class Attention(torch.nn.Module):
+        def forward(self, q, k, v):
+            return F.scaled_dot_product_attention(q, k, v).transpose(1, 2).flatten(2)
+
+    class Dit(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.single_blocks = torch.nn.ModuleList(torch.nn.Module() for _ in range(3))
+            for block in self.single_blocks:
+                block.attention = Attention()
+
+        def forward_prepared(self, request, step, *, video, action):
+            q, k, v = request.qkv
+            return torch.stack([block.attention(q, k, v) for block in self.single_blocks]).sum(0)
+
+    def request(txt, seed):
+        qkv = torch.randn(3, 1, heads, sum(lengths), dim, generator=torch.Generator().manual_seed(seed))
+        names = ("txt_len", "video_len", "video_cond_len", "action_len", "action_cond_len")
+        return SimpleNamespace(txt=txt, qkv=qkv, **dict(zip(names, lengths)))
+
+    empty = torch.zeros(1)
+    dit = Dit()
+    policy = SimpleNamespace(dit=dit, _prepared_text_cache={"": SimpleNamespace(txt=empty)})
+    negative, positive = request(empty, 0), request(torch.ones(1), 1)
+
+    plain = [dit.forward_prepared(r, None, video=None, action=None) for r in (negative, positive)]
+    store = {}
+    with _record_attention(policy, store):
+        traced = [dit.forward_prepared(r, None, video=None, action=None) for r in (negative, positive)]
+    assert "forward_prepared" not in vars(dit) and all(not b.attention._forward_hooks for b in dit.single_blocks)
+    for a, b in zip(plain, traced, strict=True):
+        torch.testing.assert_close(a, b)  # the outputs are untouched
+    assert store["passes"] == 3 and store["blocks"] == 3  # the task pass only, once per block
+
+    start = sum(lengths[:3])
+    q, k = positive.qkv[0], positive.qkv[1]
+    expected = (q[:, :, start : start + lengths[3]] @ k.transpose(-1, -2) / dim**0.5).softmax(-1).mean(dim=(0, 1, 2))
+    torch.testing.assert_close(store["sum"] / store["passes"], expected)
+
+    model = FluxModel.__new__(FluxModel)
+    model.policy = SimpleNamespace(config=SimpleNamespace(latent_hw=(2, 4)))
+    model._spec = PolicySpec(name="flux", camera_keys=("scene", "wrist"), snapshot_indices=(0, 7))
+    attention = model._attention_maps(store)
+    history = expected.numpy()[7:23].reshape(2, 2, 4)
+    peak = history.max()
+    np.testing.assert_allclose(attention["maps"]["wrist"][7], np.round(history[1, :, 2:] / peak, 3))
+    np.testing.assert_allclose(attention["maps"]["scene"][0], np.round(history[0, :, :2] / peak, 3))
+    assert sum(attention["shares"].values()) == pytest.approx(1.0, abs=1e-3)
+    assert attention["shares"]["task text"] == pytest.approx(float(expected[:3].sum()), abs=1e-4)
+    assert "3 joint blocks" in attention["about"] and "1 task-conditioned" in attention["about"]
+
+
+def test_act_attention_maps_its_cameras_and_crosses_the_wire():
+    """The goal-conditioned ACT's cross-attention layout: [latent, state, goal, 3 cameras x (h w)]."""
+    torch = pytest.importorskip("torch")
+    from types import SimpleNamespace
+
+    from rollout.models.lerobot_policy import LeRobotModel
+
+    model = LeRobotModel.__new__(LeRobotModel)
+    model.policy = SimpleNamespace(
+        config=SimpleNamespace(robot_state_feature=True, env_state_feature=True, chunk_size=100)
+    )
+    model._spec = PolicySpec(name="act", camera_keys=("scene", "wrist", "extra"), image_hw=(64, 96))
+    weights = torch.zeros(1, 100, 3 + 3 * 2 * 3)  # 64x96 images -> 2x3 feature maps
+    weights[..., 0:3] = 0.1  # latent, state, goal
+    weights[..., 3 + 6 + 4] = 0.7  # wrist, row 1, column 1
+    attention = model._attention_maps([weights])
+    assert attention["maps"]["wrist"][0] == [[0, 0, 0], [0, 1.0, 0]]
+    assert attention["shares"] == pytest.approx(
+        {"scene": 0.0, "wrist": 0.7, "extra": 0.0, "latent": 0.1, "state": 0.1, "goal": 0.1}
+    )
+    with pytest.raises(RuntimeError, match="don't split"):
+        model._attention_maps([torch.zeros(1, 100, 20)])
+
+    plan = Plan(np.zeros((32, 6), np.float32), {}, "act", {"attention": attention})
+    assert decode_plan(json.loads(json.dumps(encode_plan(plan)))).debug["attention"]["shares"]["wrist"] == 0.7
