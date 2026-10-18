@@ -2,6 +2,9 @@
 
 ## Docs
 
+- [Worklog](docs/worklog.md): what was tried, what broke and how it was fixed, 2026-10-17 to 2026-10-18, with a
+  scoreboard of every policy run on the arm.
+
 - [SO-101 data collection (LeRobotDataset v3.0)](docs/data_collection.md): record teleoperated
   demos with `scripts/record_so101.sh --task "<prompt>" --episodes <N>`.
 - [SO-101 policy rollout (FLUX 3 Action, local or remote)](docs/inference.md): run a pretrained policy on
