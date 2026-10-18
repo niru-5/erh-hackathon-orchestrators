@@ -28,7 +28,8 @@ def main() -> None:
     parser.add_argument(
         "--adapter",
         default=os.environ.get("ROLLOUT_ADAPTER") or None,
-        help="flux: LeRobot PEFT LoRA to merge, e.g. Gawtam/flux3-chess-lora (env ROLLOUT_ADAPTER)",
+        help="flux: LeRobot PEFT LoRA to merge, e.g. Gawtam/flux3-chess-lora, or a checkpoint folder in the repo: "
+        "Gawtam/flux3-chess-lora-28moves/checkpoints/002000/pretrained_model_ema (env ROLLOUT_ADAPTER)",
     )
     parser.add_argument(
         "--adapter-revision", default=os.environ.get("ROLLOUT_ADAPTER_REVISION") or None, help="flux: adapter revision"

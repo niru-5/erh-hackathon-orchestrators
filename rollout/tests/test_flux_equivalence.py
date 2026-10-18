@@ -213,3 +213,13 @@ def test_dataset_normalization_replaces_checkpoint_quantiles():
     model = FluxModel(policy=policy, weights="tiny", normalization=ours)
     assert policy.config.state_normalization["q01"][1] == -97 and model.spec().name == "tiny [norm: ours]"
     assert np.abs(plan(model) - baseline).max() > 1e-3
+
+
+def test_adapter_in_a_repo_subfolder():
+    from rollout.models.lora import split_adapter
+
+    assert split_adapter("Gawtam/flux3-chess-lora") == ("Gawtam/flux3-chess-lora", "")
+    assert split_adapter("Gawtam/flux3-chess-lora-28moves/checkpoints/002000/pretrained_model_ema") == (
+        "Gawtam/flux3-chess-lora-28moves",
+        "checkpoints/002000/pretrained_model_ema",
+    )

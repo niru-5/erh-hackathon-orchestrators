@@ -18,17 +18,23 @@ logger = logging.getLogger(__name__)
 PREFIX = "base_model.model."
 
 
+def split_adapter(adapter: str) -> tuple[str, str]:
+    """``user/repo[/sub/folder]`` -> (repo id, folder in the repo, "" for the root), e.g. a training checkpoint:
+    Gawtam/flux3-chess-lora-28moves/checkpoints/002000/pretrained_model_ema."""
+    parts = adapter.strip("/").split("/")
+    return "/".join(parts[:2]), "/".join(parts[2:])
+
+
 def resolve_adapter(adapter: str, revision: str | None = None) -> Path:
     path = Path(adapter).expanduser()
     if path.is_dir():
         return path
     from huggingface_hub import snapshot_download
 
-    return Path(
-        snapshot_download(
-            adapter, revision=revision, allow_patterns=["adapter_config.json", "adapter_model.safetensors"]
-        )
-    )
+    repo, folder = split_adapter(adapter)
+    prefix = f"{folder}/" if folder else ""
+    files = [f"{prefix}adapter_config.json", f"{prefix}adapter_model.safetensors"]
+    return Path(snapshot_download(repo, revision=revision, allow_patterns=files)) / folder
 
 
 def merge_lora(policy: torch.nn.Module, adapter: str, revision: str | None = None) -> dict:
