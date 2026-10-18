@@ -147,22 +147,25 @@ class FluxModel:
         if not recorded.get("passes"):
             raise RuntimeError("no attention was recorded")
         weights = (recorded["sum"] / recorded["passes"]).cpu().numpy()
-        text, video, history, action, action_history = recorded["lengths"]
+        layout = recorded["layout"]
+        if sum(n for _, n in layout) != len(weights):
+            raise RuntimeError(f"layout {layout} doesn't cover the {len(weights)} attended tokens")
+        groups, start = {}, 0
+        for name, n in layout:
+            groups.setdefault(name, []).append(weights[start : start + n])
+            start += n
+        groups = {name: np.concatenate(parts) for name, parts in groups.items()}
+        history, action = groups.pop("camera history"), len(groups["actions"])
         (h, w), positions, cameras = self.policy.config.latent_hw, self._spec.snapshot_indices, self._spec.camera_keys
-        if history != len(positions) * h * w:
-            raise RuntimeError(f"{history} camera history tokens, expected {len(positions)} x {h} x {w}")
-        start = text + video
-        grids = weights[start : start + history].reshape(len(positions), h, w)
+        if len(history) != len(positions) * h * w:
+            raise RuntimeError(f"{len(history)} camera history tokens, expected {len(positions)} x {h} x {w}")
+        grids = history.reshape(len(positions), h, w)
         columns = w // len(cameras)
         images = {
             camera: {p: grids[i, :, j * columns : (j + 1) * columns] for i, p in enumerate(positions)}
             for j, camera in enumerate(cameras)
         }
-        bounds = np.cumsum([0, text, video, history, action, action_history])
-        other = {
-            name: weights[bounds[k] : bounds[k + 1]].sum()
-            for k, name in ((0, "task text"), (1, "imagined video"), (3, "actions"), (4, "action history"))
-        }
+        other = {name: values.sum() for name, values in groups.items()}
         about = (
             f"FLUX: the {action} action tokens' attention, mean over {recorded['blocks']} joint blocks, all heads and "
             f"{recorded['passes'] // recorded['blocks']} task-conditioned denoising passes"
@@ -235,58 +238,95 @@ def _keep_solver_output(store: dict, enabled: bool = True):
             setattr(sampling, name, solver)
 
 
+def _stream_group(key: str) -> str:
+    """A content stream of the joint sequence -> its name in the attention summary."""
+    if key == "x_video":
+        return "imagined video"
+    if key == "x_video_cond":
+        return "camera history"
+    return "action history" if key.endswith("_cond") else "actions"
+
+
 @contextmanager
 def _record_attention(policy, store: dict, enabled: bool = True):
-    """Sum into ``store`` how the action tokens attend over the joint sequence [task text | imagined video |
-    camera history | actions | action history] in every joint block of the prepared BF16 DiT (mean over heads and
+    """Sum into ``store`` how the action tokens attend over the joint sequence (task text, then the content
+    streams: imagined video, camera history, actions, action history) in every joint block (mean over heads and
     action tokens), on the task-conditioned passes only (guidance also runs an empty-caption pass per step).
+    ``store["layout"]``: the sequence as (group, token count) in order.
 
-    The blocks use fused attention, which never forms the weights, so a hook recomputes the action rows from the
-    same (normed, rotated) q and k; the block outputs are untouched, so the actions don't change."""
+    Works on both DiTs flux_action serves with: the training ``JointSingleSeq`` (what the SO-101 package runs,
+    prepare_inference keeps it) and the prepared BF16 DiT. Their joint blocks call fused attention, which never
+    forms the weights, so a hook on each block's ``attention`` recomputes the action rows from the same (normed,
+    rotated) q and k; the block outputs are untouched, so the actions don't change."""
     if not enabled:
         yield
         return
     dit = policy.dit
-    if not hasattr(dit, "forward_prepared") or getattr(dit, "_compiled_hot", None) is not None:
-        store["error"] = "attention maps need the uncompiled prepared DiT (a CUDA server without ROLLOUT_COMPILE)"
+    blocks = getattr(dit, "single_blocks", None)
+    prepared = hasattr(dit, "forward_prepared")
+    if blocks is None or (prepared and getattr(dit, "_compiled_hot", None) is not None):
+        store["error"] = "attention maps need an uncompiled DiT with joint blocks (a server without ROLLOUT_COMPILE)"
         yield
         return
-    original = dit.forward_prepared
     current: dict = {}
+
+    def on_attention(module, args, output):
+        layout = current.get("layout")
+        if layout is None:
+            return
+        q, k = args[0], args[1]  # (batch, heads, tokens, head_dim)
+        names = [name for name, _ in layout]
+        start = sum(n for _, n in layout[: names.index("actions")])
+        rows = q[:, :, start : start + layout[names.index("actions")][1]].float()
+        weights = (rows @ k.float().transpose(-1, -2) * rows.shape[-1] ** -0.5).softmax(-1).mean(dim=(0, 1, 2))
+        store["sum"] = weights if "sum" not in store else store["sum"] + weights
+        store["passes"] = store.get("passes", 0) + 1
+        store["layout"] = layout
+
+    def is_unconditional(ctx) -> bool:  # the empty caption's cached text context (policy._context)
+        return any(
+            (key == "" or isinstance(key, tuple) and key[0] == "") and hit[0] is ctx
+            for key, hit in policy._ctx_cache.items()
+        )
+
+    def before_forward(module, args, kwargs):  # JointSingleSeq.forward(ctx=..., x_<stream>=..., ...)
+        current.clear()
+        if kwargs.get("seqlens") is not None or is_unconditional(kwargs["ctx"]):
+            return
+        streams: dict[str, list[str]] = {}  # per modality, in the order the DiT concatenates them
+        for key, modality in module.sequence.items():
+            if key in kwargs:
+                streams.setdefault(modality, []).append(key)
+        current["layout"] = [("task text", kwargs["ctx"].shape[1])] + [
+            (_stream_group(key), kwargs[key].shape[1]) for keys in streams.values() for key in keys
+        ]
 
     def forward_prepared(request, step, **inputs):
         unconditional = policy._prepared_text_cache.get("")  # the empty caption's prepared text, shared by request
         if unconditional is None or request.txt is not unconditional.txt:
-            current["lengths"] = (
-                request.txt_len,
-                request.video_len,
-                request.video_cond_len,
-                request.action_len,
-                request.action_cond_len,
-            )
+            current["layout"] = [
+                ("task text", request.txt_len),
+                ("imagined video", request.video_len),
+                ("camera history", request.video_cond_len),
+                ("actions", request.action_len),
+                ("action history", request.action_cond_len),
+            ]
         try:
             return original(request, step, **inputs)
         finally:
             current.clear()
 
-    def on_attention(module, args, output):
-        lengths = current.get("lengths")
-        if lengths is None:
-            return
-        q, k = args[0], args[1]  # (batch, heads, tokens, head_dim)
-        start = sum(lengths[:3])
-        rows = q[:, :, start : start + lengths[3]].float()
-        weights = (rows @ k.float().transpose(-1, -2) * rows.shape[-1] ** -0.5).softmax(-1).mean(dim=(0, 1, 2))
-        store["sum"] = weights if "sum" not in store else store["sum"] + weights
-        store["passes"] = store.get("passes", 0) + 1
-        store["lengths"] = lengths
-
-    store["blocks"] = len(dit.single_blocks)
-    dit.forward_prepared = forward_prepared
-    handles = [block.attention.register_forward_hook(on_attention) for block in dit.single_blocks]
+    store["blocks"] = len(blocks)
+    handles = [block.attention.register_forward_hook(on_attention) for block in blocks]
+    if prepared:
+        original = dit.forward_prepared
+        dit.forward_prepared = forward_prepared
+    else:
+        handles.append(dit.register_forward_pre_hook(before_forward, with_kwargs=True))
     try:
         yield
     finally:
-        del dit.forward_prepared  # back to the class method
+        if prepared:
+            del dit.forward_prepared  # back to the class method
         for handle in handles:
             handle.remove()

@@ -150,6 +150,47 @@ def test_flux_debug_imagines_future_frames_without_changing_actions():
     np.testing.assert_array_equal(traced.debug["chunk"][:32], traced.actions)
     assert traced.debug["chunk"].shape == (42, 6) and "future_decode_ms" in traced.timing
 
+    # attention, on the training JointSingleSeq the SO-101 package serves with (guidance: an empty-caption pass too)
+    assert "attention_error" not in traced.debug, traced.debug.get("attention_error")
+    attention = traced.debug["attention"]
+    cfg = policy.config
+    h, w = cfg.latent_hw
+    assert set(attention["maps"]) == {"scene", "wrist"}
+    assert np.asarray(attention["maps"]["wrist"][7]).shape == (h, w // 2)
+    assert max(np.max(g) for frames in attention["maps"].values() for g in frames.values()) == 1.0
+    assert sum(attention["shares"].values()) == pytest.approx(1.0, abs=2e-3)
+    assert set(attention["shares"]) == {"scene", "wrist", "task text", "imagined video", "actions", "action history"}
+    assert not any(b.attention._forward_hooks for b in policy.dit.single_blocks)
+    assert not policy.dit._forward_pre_hooks
+
+
+def test_flux_attention_skips_the_empty_caption_pass_of_guidance():
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("flux_action")
+    from test_flux_equivalence import observations, tiny_so101_policy
+
+    from rollout.models.flux import FluxModel
+
+    policy = tiny_so101_policy()
+    policy.config.guidance_scale = 3.0  # as the released package: cfg_two_pass, empty caption then the task
+    calls = []
+    policy.dit.register_forward_pre_hook(lambda m, a, k: calls.append(k["ctx"]), with_kwargs=True)
+    model = FluxModel(policy=policy, weights="tiny")
+    history = History(model.spec())
+    for obs in observations(9):
+        history.append(obs, None if len(history) == 0 else obs.state)
+    plain = model.predict(history.window("move"))
+    window = history.window("move")
+    window.debug = True
+    calls.clear()
+    traced = model.predict(window)  # the fake VAE can't decode the imagined frames: future_error, attention still
+
+    steps = policy.config.num_inference_steps
+    assert len(calls) == 2 * steps and calls[0] is not calls[1]
+    np.testing.assert_array_equal(traced.actions, plain.actions)
+    assert f"{steps} task-conditioned" in traced.debug["attention"]["about"]
+    assert torch.is_tensor(calls[0])
+
 
 def test_flux_attention_records_the_conditional_action_rows_and_maps_them_to_the_cameras():
     """Stand-in for flux_action's prepared BF16 DiT (same interface): joint blocks whose ``attention`` module gets
