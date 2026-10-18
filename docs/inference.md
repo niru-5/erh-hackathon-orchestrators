@@ -255,6 +255,44 @@ same episodes. Its error is what "never moving" scores. For example, episode 19 
 64°, elbow_flex 50° mean error over the episode; 5° / 3° over the first plan. Wall time and Hz are not
 meaningful on the dataset robot (it doesn't run in real time; video decoding sets the pace).
 
+### Debug runs and the viewer
+
+`run --debug` records everything needed to see afterwards what the model was given and what it intended:
+
+- every tick's camera frames, at the model's input size (`debug/frames/ep000/<camera>/<tick>.jpg`);
+- per plan, the snapshot images, the 8-tick state and command history, the task, the executed actions and the
+  full 42-step chunk, including the 10 actions that a replan replaces (`debug/plans.jsonl`, `debug/plans/`);
+- for FLUX, the frames it **imagines** for that chunk. FLUX denoises a video of the future together with the
+  actions, and `FluxActionPolicy._sample` keeps only the actions. `FluxModel` keeps the video tokens as well
+  (it wraps flux_action's ODE solver while it runs; the actions are bit-identical, see
+  `rollout/tests/test_debug.py`) and decodes them with the policy's own video VAE: 11 latent frames → 41
+  frames of the side_by_side canvas (scene | wrist). Frame j is the observation after action j, about 1.4 s
+  ahead. During training the future clip is encoded on its own (`history.encode_windows`), so it decodes on
+  its own.
+
+The server decodes the frames only when the request asks for them (`"debug": true` in the window). That adds
+GPU time to each plan (`future_decode_ms` in the plan timing), and the arm holds still while it waits, as for
+every plan. Responses grow to about 1 MB (41 JPEGs). An older server ignores the flag, so the run still works
+without the imagined frames. ACT and the hold model return only the chunk.
+
+At the end of a debug run, `viewer.html` is written into the run directory. `python -m rollout view [run dir]`
+rebuilds it for any run, debug or not (default: the latest under `rollout_logs/`; `--open` opens a browser).
+It is a single file with no network access. It shows:
+
+- **Findings**: plain-language notes, each linked to its tick. A plan that starts more than 5° away from
+  the last command sent (it doesn't continue the motion it was given). An arm more than 10° from where the plan
+  put it at the plan's end (blocked, capped by `max_relative_target`, or clamped). Commands changed before
+  sending. Predicted actions outside the joint range. Why the episode stopped.
+- the cameras at the current tick, the frame the model imagined for that tick, and the inputs of the current
+  plan;
+- a strip of imagined vs. actual frames over the whole plan. Columns past the replan point are faded:
+  imagined but never executed;
+- per-joint charts: measured state, sent goal, each plan's chunk (executed part and tail) and the joint
+  limits (written to `summary.json` since this change), with a cursor you can drag;
+- the plan table: latency, inference and decode time, jump, drift, clamped commands, actions beyond the limits.
+
+Keys: space plays and pauses, ←/→ steps one tick, [ and ] jump between plans.
+
 ## First results (2026-10-17, A100 Space, open loop on episode 0)
 
 The full path works with the real model: recorded episode 0 of our main dataset → `RemoteBackend` → HTTPS →
@@ -615,16 +653,18 @@ plugin fails to import in our venv.
 
 ```
 rollout/
-├── __main__.py, cli.py     # python -m rollout run ...
+├── __main__.py, cli.py     # python -m rollout run ... / view ...
 ├── contract.py             # PolicySpec, Observation, Window, Plan (numpy only)
 ├── history.py              # 8-tick history, mirrors flux's ObservationHistory
 ├── codec.py                # JSON + JPEG wire format
 ├── loop.py                 # control loop, safety limits, logging
+├── debug.py                # run --debug: frames, plan inputs/outputs, imagined future
+├── viewer.py, viewer_template.html  # python -m rollout view: findings + viewer.html
 ├── backends/               # local.py (in-process), remote.py (HTTP)
 ├── models/                 # flux.py (FLUX 3 Action), hold.py (mock)
 ├── robots/                 # so101.py (lerobot follower + cameras), dataset.py (replay)
 ├── server/                 # app.py (FastAPI), Dockerfile, requirements.txt, space.py (deploy/start/stop)
-└── tests/                  # history/codec/server/loop tests, flux equivalence test
+└── tests/                  # history/codec/server/loop tests, flux equivalence test, debug/viewer tests
 ```
 
 ## Next steps
