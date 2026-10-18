@@ -66,7 +66,10 @@ details summary { cursor: pointer; color: var(--muted); }
 .strip .cell { aspect-ratio: var(--canvas-aspect); position: relative; background: var(--grid); margin-bottom: 2px; }
 .strip .cell img { width: 100%; height: 100%; display: block; object-fit: fill; }
 .strip .lbl { font-size: 11px; color: var(--muted); text-align: center; }
-.inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.inputs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.inputs > div, .views > div { min-width: 0; }
+.inputs > div > div:not(.caption) { position: relative; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.inputs img { display: block; width: 100%; height: 100%; object-fit: fill; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 12px; }
 th, td { text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th:first-child, td:first-child { text-align: left; }
@@ -246,7 +249,7 @@ function render() {
   else if (j < 0) im.appendChild(empty("this tick is the plan's present: the frames to the right are its inputs"));
   else if (j >= fut.length) im.appendChild(empty("beyond the imagined horizon"));
   else { const x = new Image(); x.src = fut[j]; im.appendChild(x); }
-  $("imaginedCap").textContent = fut ? `plan ${plan.plan}, imagined frame ${j} of ${fut.length} (after action ${j})` : "";
+  $("imaginedCap").textContent = fut && j >= 0 && j < fut.length ? `plan ${plan.plan}, imagined frame ${j + 1} of ${fut.length} (after action ${j})` : "";
 
   // inputs
   const inp = $("inputs"); inp.innerHTML = "";
@@ -256,7 +259,7 @@ function render() {
       const wrap = document.createElement("div");
       wrap.appendChild(img(plan.inputs[c][p], ""));
       const lbl = document.createElement("div"); lbl.className = "caption";
-      lbl.textContent = `${c}, window pos ${p} (tick ${plan.tick - (SPEC.n_obs_steps - 1) + p})`;
+      lbl.textContent = `${c}, pos ${p} (tick ${plan.tick - (SPEC.n_obs_steps - 1) + p})`;
       wrap.appendChild(lbl); inp.appendChild(wrap);
     }
     $("inputsCap").textContent = `task “${plan.task}”`;
