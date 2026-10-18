@@ -672,6 +672,14 @@ request instead of 1.5 s.
   piece at close range, and plan 4's imagined frame matches it. Stall guard at 3.3 s (tick 99): shoulder_lift held at
   3° vs. goal 8°, most likely pressing against the piece. Plan 4's chunk would have **backed off with the gripper still
   open** (lift 8 → −21°, elbow 54 → 78°, gripper 16–17 %), so even without the guard it wasn't about to grasp.
+- **05:18, step 2000** (EMA, `--adapter Gawtam/flux3-chess-lora-28moves/checkpoints/002000/pretrained_model_ema
+  --adapter-revision 99c01fb`; adapters can now be a folder in the repo; its normalization files are identical to
+  step 1000's), same a1 → a4 prompt and limits. The **first full 20 s** of these runs: 19 plans, no stall, no runaway.
+  Reached by 3 s (lift −9°, elbow 41°, gripper open 18 %, the piece in front of the fingers), hovered, backed almost to
+  rest by 9.6 s, then reached again at 11–13 s and 15–17 s (at 16.8 s the piece fills the wrist view). At 17–18.4 s
+  the gripper **closed** (14 → 4 %) for the first time in these runs, while lifting back, but on nothing: the wrist camera
+  shows empty jaws over the paper. wrist_roll sat on its −112° limit from 4 s on (most of the 424 capped ticks).
+  The arm ended holding over a1, the piece still there.
 
 **What the imagined frames show:** FLUX's imagined future matches what the cameras then saw closely in both runs.
 In plans 3–4 the imagined wrist view and the real one both show the gripper over the white paper with the two
