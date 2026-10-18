@@ -592,6 +592,56 @@ grasps. The rest/reach cycle seen with the step-125 adapter remains. The stop-an
 then about 1.5 s still while the next plan is requested) likely feeds it: after each pause the 8-tick history looks
 like an arm at rest.
 
+## Continued to step 4500: `Gawtam/flux3-chess-lora-ownstats-4gpu-ext` (2026-10-18, 02:14)
+
+`ownstats-4gpu` resumed from its step 2500 (optimizer, EMA and data order kept; constant LR 1e-4) to 5000 updates.
+The repo root is **step 4500, EMA** (revision `a555c08`), chosen by the moving-window metric. The card reports
+2.44° arm / 2.09 % gripper offline, and on moving windows 3.39°, 95 % right direction, median coverage 1.01
+(step 2500: 2.59°, 94 %, 0.85). The quantiles in the processor files are identical to `ownstats-4gpu@ef78fbb`
+(checked); they are in [`scripts/flux_convention/ownstats4gpu_ext_norm.json`](../scripts/flux_convention/ownstats4gpu_ext_norm.json).
+
+```bash
+.venv/bin/python -m rollout.server.space deploy --adapter Gawtam/flux3-chess-lora-ownstats-4gpu-ext \
+  --adapter-revision a555c086e5b358883f94ab96f22f11d191fcb5e3 --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849 \
+  --normalization scripts/flux_convention/ownstats4gpu_ext_norm.json
+```
+
+The Space was SLEEPING, so `deploy --no-wait` and then `HfApi().restart_space(...)`: serving about 1 minute later.
+
+**Offline, teacher-forced, episodes 25 and 30** (`rollout_logs/eval_ownstats4gpu_ext`, `eval_hold_25_30`), mean error,
+degrees (gripper %):
+
+| Policy | pan | lift | elbow | wflex | wroll | **arm** | gripper |
+|---|---|---|---|---|---|---|---|
+| ownstats-4gpu-ext step 4500 | 1.16 | 4.89 | 4.11 | 2.88 | 1.10 | **2.83** | 2.50 |
+| ownstats-4gpu step 2500 (ep 25 / 30) | 1.3 | 5.4 | 4.0 | 3.0 | 1.2 | **2.95** | 2.45 |
+| Hold | 1.43 | 7.92 | 5.98 | 3.70 | 0.81 | **3.97** | 1.78 |
+
+Moving windows (14): **arm error 3.86° vs. hold 7.12°, right direction 87 %, median coverage 0.73.**
+
+**Dry run** (`dry_ownstats4gpu_ext`): stopped at tick 90 by the runaway abort (shoulder_lift commanded 75°), as every
+dry run. Latency unchanged: 1.06 s inference, about 1.5 s per request.
+
+**Two real-arm runs** (20 s of executed ticks each, safety defaults, from rest, piece on c3; Esc not available):
+
+| Run | Ticks (wall) | Grasp | Furthest out at d5 (lift / elbow) | Clamped | Stopped by |
+|---|---|---|---|---|---|
+| 02:14 (`real_ownstats4gpu_ext`) | 572 (46 s) | 1st closed empty (0.9 %); 2nd **held at 6.1 % vs. 0.9 % commanded** | +33° / −12° | 1 | stall: shoulder_lift (gap 4°) after the release |
+| 02:17 (`real_ownstats4gpu_ext_2`) | 241 (20 s) | **held at 5.9 % vs. 0.9 % commanded** on the first try | +27° / −1° | 0 | stall: shoulder_lift (gap 4°) after the release |
+
+- **02:14:** reach to c3 in 6 s (pan −13…−16°, lift −97 → +8°, elbow 94 → 26°, gripper open to 20 %), closed fully
+  at 12 s (missed), carried empty toward d5 (pan −6 → 0°, lift +21°), opened, went back to lift −70°. Second reach
+  at 28–33 s (pan −11°, lift +10°, elbow 23°), closed and held, carried to d5 (pan −2°, lift +33°, elbow −12°),
+  opened to 15–18 % at 43 s (release), then asked to lift back, which the outstretched arm couldn't do: stall.
+- **02:17:** the cleanest FLUX episode so far. Reach to c3 by 9.8 s (pan −10°, lift +6°, elbow 27°, gripper 23 %),
+  closed at 10–12 s and held, carried to d5 by 15.3 s (pan −1.6°, lift +25°, elbow 2°), released at 17.4–19.9 s
+  (gripper 6 → 19 %), then the same stall on the way back.
+- wrist_roll stayed within −95…−73° (step 2500 drifted −67 → −94° in its 40 s run). No runaway, no bus error.
+
+**Takeaways:** step 4500 does the whole pick-and-place in one episode, in the second run on the first try. Both runs
+end with the stall guard when the outstretched arm asks to lift back after the release (as step 2500's third run).
+Where the piece landed was not checked by eye; inferred from the gripper's commanded vs. measured gap and the poses.
+
 ## Testing
 
 ```bash
