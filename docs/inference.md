@@ -660,6 +660,12 @@ request instead of 1.5 s.
 - **04:48:** started from pan −12°, slower reach (lift −97 → −25°, elbow 86 → 66°). Stall guard at 3.4 s (tick 102):
   shoulder_lift held at −25° vs. goal −20°.
 - The gripper stayed closed (1–2 %) in both. The plans' unexecuted tails asked for 12–16 %.
+- **05:04, prompt `move the figure from b1 to b4`** (a new upright piece on b1): the best of the three. Pan −17 → −24°,
+  shoulder_lift −97 → −36°, elbow 87 → 68°, wrist_flex 82 → 65°, and the gripper **opened** to 13–14 % on the way in.
+  At the end the wrist camera shows the piece right in front of the open fingers. Plan 4's imagined future (+1.4 s)
+  closes the gripper around it. The stall guard stopped it at 3.2 s (tick 97): shoulder_lift held at −36° vs.
+  goal −31°, probably the fingertips on the board while the model pushes down to grasp. The first attempt failed
+  at connect with a transient bus error (motor 2, "no status packet"); the retry seconds later worked.
 
 **What the imagined frames show:** FLUX's imagined future matches what the cameras then saw closely in both runs.
 In plans 3–4 the imagined wrist view and the real one both show the gripper over the white paper with the two
