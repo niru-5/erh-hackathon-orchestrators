@@ -16,8 +16,8 @@ from one square to another?
   checkpoint did a complete pick-and-place in one episode.
 - **We scaled up data collection** to moves along the b, c and d files (b1 → b2 … b7, and the same for c and d). A
   camera problem forced us to recollect part of it.
-- **Super ACT** puts the task text into ACT's 6-dimensional input so that one ACT model can learn many different
-  moves.
+- **Super ACT** (goal-conditioned ACT) turns the task text into a 6-value move vector that ACT takes as an extra
+  input, so one ACT model can learn many different moves.
 - **FLUX fine-tuned on the multi-move data** works in distribution and seems to generalize to other parts of the
   board. We checked what it "thinks" by decoding its predicted future video frames and by looking at its attention
   maps.
@@ -132,9 +132,19 @@ The old and new series shouldn't be mixed in training without accounting for the
 
 ## 6. Phase 4: Super ACT, one ACT model for many moves
 
-Plain ACT ignores the task prompt, so one ACT model learns only one move. **Super ACT** puts the task text into
-the 6-dimensional vector ACT uses as input, so a single model learns the different movements and the prompt
-chooses which one to do.
+Plain ACT ignores the task prompt, so one ACT model learns only one move. **Super ACT** (goal-conditioned ACT,
+`rtrtwrw/act_chess_goalcond_*`) turns the text into a 6-value vector that ACT takes as an extra input
+(`observation.environment_state`). A single model then learns the different movements, and the prompt chooses which
+one to do.
+
+The two squares named in the task ("Move the figure from b1 … to b4 …") are encoded as
+
+```
+(from_x, from_y, to_x, to_y, dx, dy)    files a–h and ranks 1–8 scaled to [-1, 1], dx = (to_x - from_x) / 2
+```
+
+The rollout computes the same vector from the prompt (`rollout/models/lerobot_policy.py`, `chess_goal`), so the
+model is driven by the same `--task` text as FLUX.
 
 - It trains and runs cheaply (ACT runs on the laptop CPU).
 - It works well for the moves it was trained on, so it is a practical offline training option.
@@ -166,7 +176,17 @@ it was going was right even when the grasp missed.
 ### Attention maps
 
 We also looked at the attention maps to check that the model attends to the right places: the piece, the source
-and target squares, and the gripper.
+and target squares, and the gripper. With `--debug`, the viewer draws a heatmap over each input image showing
+where the action tokens look, and gives the share of attention on each camera and token group
+(`rollout/attention.py`):
+
+- **FLUX:** the 42 action tokens' rows of the joint attention, averaged over the 28 joint blocks, the 24 heads and
+  the denoising passes. The server recomputes them from the same q and k, so the actions don't change. Shares are
+  given for each camera, the task text, the imagined video, the actions and the action history.
+- **ACT:** the decoder's cross-attention from the action queries to the image tokens, plus the latent, state and
+  goal tokens.
+
+Attention shows what the model reads, not why it acts, so we treat it as a hint, not an explanation.
 
 ## 9. Conclusions
 
