@@ -630,6 +630,43 @@ grasps. The rest/reach cycle seen with the step-125 adapter remains. The stop-an
 then about 1.5 s still while the next plan is requested) likely feeds it: after each pause the 8-tick history looks
 like an arm at rest.
 
+## 28-move LoRA, b1 → b4, first debug runs: `Gawtam/flux3-chess-lora-28moves` (2026-10-18, 04:45)
+
+Rank-32 LoRA over 28 moves (a1/b1/c1/d1 → x2…x8, 197 episodes), repo root = step 1000, EMA, revision `24a1fae`,
+normalized with its own dataset statistics (extracted from the processor files as for ownstats, above).
+Deployed with the `--debug` server code:
+
+```bash
+.venv/bin/python -m rollout.server.space deploy --adapter Gawtam/flux3-chess-lora-28moves \
+  --adapter-revision 24a1fae78c7725920ff57950ad917b13028d408f --revision c9e13b2aca6a0a472b3ea03fd90cff32d3e85849 \
+  --normalization 28moves_norm.json
+.venv/bin/python -m rollout run --robot so101 --policy https://niru-5-flux3-so101-rollout.hf.space \
+  --task "Move the object from b1 to b4" --episode-time 20 --debug \
+  --limits-from niru-5/chess_dataset_b1_2cm_to_b4_8cm_20261017_221503
+```
+
+The joint limits come from the b1 → b4 demos: they reach shoulder_pan −24°, beyond the c3 → d5 default's −18°.
+The task is the prompt as given. The adapter card says it was trained on captions like
+`Move the figure from b1 at 2 cm to b4 at 8 cm`. Offline (recorded episode 0 of the b1 → b4 dataset, 5 plans),
+the two prompts give chunks up to 19° apart but similar errors (shoulder_lift MAE 11.9° vs. 13.0°).
+
+`--debug` costs about 0.2 s of GPU per plan (decoding 41 imagined frames on the A100) plus transfer: 2.1–2.2 s per
+request instead of 1.5 s.
+
+**Real arm, two 20 s episodes (safety defaults):**
+
+- **04:45:** reached out from rest within 4 s (shoulder_lift −97 → +1°, elbow_flex 94 → 47°, pan −4 → −24°, onto
+  the limit; plan 3 asked for −31°). The stall guard stopped it at 3.9 s (tick 116): elbow_flex held at 49° vs. goal 54°.
+- **04:48:** started from pan −12°, slower reach (lift −97 → −25°, elbow 86 → 66°). Stall guard at 3.4 s (tick 102):
+  shoulder_lift held at −25° vs. goal −20°.
+- The gripper stayed closed (1–2 %) in both. The plans' unexecuted tails asked for 12–16 %.
+
+**What the imagined frames show:** FLUX's imagined future matches what the cameras then saw closely in both runs.
+In plans 3–4 the imagined wrist view and the real one both show the gripper over the white paper with the two
+black tape marks beside the board edge near b1, not over the knight. So the arm went where the model intended:
+the model aims slightly off the piece, rather than the arm failing to follow a good plan.
+Logs and viewers: `rollout_logs/real_28moves_b1b4_debug/` and `rollout_logs/offline_28moves_b1b4_prompts/`.
+
 ## Testing
 
 ```bash
