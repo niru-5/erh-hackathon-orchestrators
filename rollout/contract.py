@@ -59,5 +59,5 @@ class Plan:
     model: str = ""
     # Only when Window.debug asked for it, all optional: "chunk" (chunk_size, 6) every predicted action, executed
     # or not; "future_frames" (T, H, W, 3) uint8 the frames a world model imagines after this window (FLUX: the
-    # side_by_side canvas, frame j = the observation after action j); "future_fps".
+    # side_by_side canvas, frame j = the observation after action j); "future_fps"; "future_error" if decoding failed.
     debug: dict = field(default_factory=dict)

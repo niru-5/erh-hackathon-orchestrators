@@ -62,6 +62,9 @@ class DebugRecorder:
                 "frames": [self._write(f"{base}/future/{j:03d}.jpg", frame) for j, frame in enumerate(frames)],
                 "fps": plan.debug.get("future_fps", self.spec.fps),
             }
+        if "future_error" in plan.debug:
+            record["future_error"] = plan.debug["future_error"]
+            logger.warning("plan %d: no imagined frames: %s", number, plan.debug["future_error"])
         self._plans.write(json.dumps(_jsonable(record)) + "\n")
         self._plans.flush()
 

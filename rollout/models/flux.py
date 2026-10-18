@@ -4,6 +4,7 @@ Needs a CUDA GPU with about 32 GB and the flux-action environment (torch 2.10 + 
 NATTEN), see rollout/server/Dockerfile. Only imported when a flux model is requested.
 """
 
+import logging
 import time
 from contextlib import contextmanager
 
@@ -13,6 +14,7 @@ import torch
 from ..contract import ACTION_NAMES, Plan, PolicySpec, Window
 
 DEFAULT_WEIGHTS = "black-forest-labs/flux-3-action-so101"
+logger = logging.getLogger(__name__)
 
 
 class FluxModel:
@@ -111,8 +113,12 @@ class FluxModel:
         debug = {}
         if window.debug:
             decode_started = time.perf_counter()
-            future = self._decode_future(solver_out["x_video"])
-            debug = {"chunk": chunk, "future_frames": future, "future_fps": spec.fps}
+            debug = {"chunk": chunk}
+            try:  # a debug extra must never cost the plan
+                debug.update(future_frames=self._decode_future(solver_out["x_video"]), future_fps=spec.fps)
+            except Exception as error:
+                logger.exception("decoding the imagined future failed")
+                debug["future_error"] = f"{type(error).__name__}: {error}"[:500]
             timing["future_decode_ms"] = (time.perf_counter() - decode_started) * 1e3
         return Plan(actions, timing, spec.name, debug)
 
@@ -127,9 +133,13 @@ class FluxModel:
 
         cfg, device = self.policy.config, self.policy.device
         (h, w), t = cfg.latent_hw, packing.latent_frames(cfg.chunk_size)
-        latents = rearrange(tokens[0].float(), "(t h w) c -> c t h w", t=t, h=h, w=w)[None].to(device)
+        vae = self.policy.video_vae
+        module = getattr(vae, "module", vae)
+        weight = next(module.parameters(), None) if isinstance(module, torch.nn.Module) else None
+        dtype = weight.dtype if weight is not None else torch.float32
+        latents = rearrange(tokens[0].float(), "(t h w) c -> c t h w", t=t, h=h, w=w)[None].to(device, dtype)
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
-            video = self.policy.video_vae.decode(latents)  # (1, 3, T, H, W) in [-1, 1]
+            video = vae.decode(latents)  # (1, 3, T, H, W) in [-1, 1]
         content_h, content_w = packing.content_hw(cfg.camera_layout, cfg.canvas_hw)
         video = video[0, :, :, :content_h, :content_w].float().clamp(-1, 1)
         return ((video.permute(1, 2, 3, 0) + 1) * 127.5).round().to(torch.uint8).cpu().numpy()
