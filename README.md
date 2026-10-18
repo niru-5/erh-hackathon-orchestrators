@@ -1,5 +1,15 @@
 # erh-hackathon-orchestrators
 
+Goal: Exploring world action model for moving chess pieces. 
+
+How did we start -> 
+Lets take a simple task -> Moving a horse piece from C3 to D5 -> 31 episodes. 
+What did we do? 
+-> we trained a finetuned flux model -> did not work, normalization issue. 
+-> we tried the one shot 
+
+
+
 ## Docs
 
 - [Worklog](docs/worklog.md): what was tried, what broke and how it was fixed, 2026-10-17 to 2026-10-18, with a
