@@ -223,3 +223,21 @@ def test_adapter_in_a_repo_subfolder():
         "Gawtam/flux3-chess-lora-28moves",
         "checkpoints/002000/pretrained_model_ema",
     )
+
+
+def test_fewer_action_steps_per_plan_execute_the_same_chunk_prefix():
+    policy = tiny_so101_policy()
+    ticks = observations(9)
+
+    def plan(model):
+        history = History(model.spec())
+        for obs in ticks:
+            history.append(obs, None if len(history) == 0 else obs.state)
+        return model.predict(history.window("move")).actions
+
+    full = plan(FluxModel(policy=policy, weights="tiny"))
+    model = FluxModel(policy=policy, weights="tiny", n_action_steps=10)
+    assert model.spec().n_action_steps == 10 and model.spec().name == "tiny [10 steps/plan]"
+    np.testing.assert_array_equal(plan(model), full[:10])
+    with pytest.raises(ValueError):
+        FluxModel(policy=policy, weights="tiny", n_action_steps=43)

@@ -159,12 +159,15 @@ def deploy(api: HfApi, args, ledger: Ledger) -> None:
         "ROLLOUT_ADAPTER": args.adapter,
         "ROLLOUT_ADAPTER_REVISION": args.adapter_revision,
         "ROLLOUT_NORMALIZATION": _normalization_json(args.normalization),
+        "ROLLOUT_N_ACTION_STEPS": str(args.n_action_steps) if args.n_action_steps else None,
     }
     for key, value in variables.items():
         if value:
             api.add_space_variable(args.space_id, key, value)
-    removed = (["ROLLOUT_ADAPTER", "ROLLOUT_ADAPTER_REVISION"] if args.no_adapter else []) + (
-        ["ROLLOUT_NORMALIZATION"] if args.no_normalization else []
+    removed = (
+        (["ROLLOUT_ADAPTER", "ROLLOUT_ADAPTER_REVISION"] if args.no_adapter else [])
+        + (["ROLLOUT_NORMALIZATION"] if args.no_normalization else [])
+        + (["ROLLOUT_N_ACTION_STEPS"] if args.default_action_steps else [])
     )
     if removed:
         existing = api.get_space_variables(args.space_id)
@@ -240,6 +243,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--no-normalization", action="store_true", help="deploy: back to the checkpoint's normalization"
+    )
+    parser.add_argument(
+        "--n-action-steps", type=int, help="deploy: actions executed per plan before replanning (1..42; default 32)"
+    )
+    parser.add_argument(
+        "--default-action-steps", action="store_true", help="deploy: back to the checkpoint's actions per plan"
     )
     parser.add_argument("--no-wait", action="store_true", help="deploy/start: return without waiting for RUNNING")
     parser.add_argument("--wait-timeout", type=float, default=2400, help="seconds to wait for RUNNING (default 2400)")

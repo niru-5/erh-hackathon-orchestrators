@@ -103,7 +103,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     model.add_argument("--device", default="auto", help="cuda, cpu or auto (default: cuda if available)")
     model.add_argument(
-        "--n-action-steps", type=int, help="lerobot: actions executed per plan (default: the checkpoint's config)"
+        "--n-action-steps",
+        type=int,
+        help="lerobot/flux: actions executed per plan before replanning (default: the checkpoint's config; "
+        "a remote server sets its own, see rollout.server --n-action-steps)",
     )
     model.add_argument("--compile", action="store_true", help="flux: torch.compile the DiT (slow first request)")
     model.add_argument("--hold-delay", type=float, default=0.0, help="hold: simulated inference seconds")
@@ -153,6 +156,7 @@ def _backend(args):
             "adapter": args.adapter,
             "adapter_revision": args.adapter_revision,
             "normalization": args.normalization,
+            "n_action_steps": args.n_action_steps,
         }
         if args.weights:
             kwargs["weights"] = args.weights

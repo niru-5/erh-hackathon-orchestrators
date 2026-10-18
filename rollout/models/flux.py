@@ -30,6 +30,7 @@ class FluxModel:
         adapter_revision: str | None = None,
         normalization: dict | str | None = None,  # our dataset's quantiles instead of the checkpoint's, see
         # rollout/normalization.py (a dict, JSON string/file or dataset id)
+        n_action_steps: int | None = None,  # actions executed per plan before replanning (default: the checkpoint's 32)
         policy=None,  # an already loaded FluxActionPolicy (tests)
     ):
         from flux_action.processing.history import snapshot_indices
@@ -60,6 +61,9 @@ class FluxModel:
             cfg.state_normalization = {q: list(map(float, stats["state"][q])) for q in ("q01", "q99")}
             cfg.action_normalization = {q: list(map(float, stats["action"][q])) for q in ("q01", "q99")}
             norm_source = stats.get("source", "custom")
+        n_action_steps = n_action_steps or cfg.n_action_steps
+        if not 1 <= n_action_steps <= cfg.chunk_size:
+            raise ValueError(f"n_action_steps must be 1..{cfg.chunk_size}, got {n_action_steps}")
         if cfg.inference_profile != "history" or cfg.camera_layout != "side_by_side":
             raise ValueError("FluxModel supports the SO-101 history package (side_by_side cameras)")
         canvas_h, canvas_w = cfg.canvas_hw
@@ -67,12 +71,13 @@ class FluxModel:
         self._spec = PolicySpec(
             name=(weights if isinstance(weights, str) else "flux")
             + (f"+{adapter}" if adapter else "")
-            + (f" [norm: {norm_source}]" if norm_source else ""),
+            + (f" [norm: {norm_source}]" if norm_source else "")
+            + (f" [{n_action_steps} steps/plan]" if n_action_steps != cfg.n_action_steps else ""),
             camera_keys=tuple(key.removeprefix("images.") for key in self._keys),
             n_obs_steps=cfg.n_obs_steps,
             snapshot_indices=tuple(snapshot_indices(cfg)),
             chunk_size=cfg.chunk_size,
-            n_action_steps=cfg.n_action_steps,
+            n_action_steps=n_action_steps,
             fps=float(cfg.fps),
             image_hw=(canvas_h, canvas_w // 2),
             action_names=ACTION_NAMES,
