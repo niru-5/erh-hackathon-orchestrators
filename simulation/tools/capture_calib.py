@@ -60,10 +60,11 @@ class Camera:
         self._run = False
         self._thread: threading.Thread | None = None
 
-    def open(self, device: str | int, res: str) -> None:
+    def open(self, device: str | int, res: str, cam_id: str = "") -> None:
         if self._cap is not None and (device, res) == (self.device, self.res) and self._run:
             return
         self.close()
+        self.control_problems: list[str] = reg.apply_saved(device, cam_id, OUT_ROOT) if cam_id else []  # e.g. the focus lock
         cap = cv2.VideoCapture(device, cv2.CAP_V4L2) if isinstance(device, str) else cv2.VideoCapture(device)
         if not cap.isOpened():
             raise RuntimeError(f"Could not open {device} (is another program using it?)")
@@ -153,7 +154,7 @@ def open_cam(label: str, res: str):
     if label not in cams:
         raise gr.Error("Camera not found, press Refresh.")
     try:
-        CAM.open(cams[label]["device"], res)
+        CAM.open(cams[label]["device"], res, cams[label]["id"])
     except RuntimeError as e:
         raise gr.Error(str(e))
 
@@ -199,6 +200,76 @@ def apply_board(*vals):
         f"Board saved to {ag.board_path(OUT_ROOT)}. Re-run Analyze / Compute to re-judge existing images."
 
 
+# --------------------------------------------------------------------------- camera controls (focus lock)
+def controls_read(label):
+    c = list_cameras().get(label)
+    if not c:
+        raise gr.Error("Select a camera.")
+    cur = reg.read_controls(c["device"], ["focus_automatic_continuous", "focus_absolute"])
+    return (not bool(cur.get("focus_automatic_continuous", 1)), cur.get("focus_absolute", 0),
+            f"camera now: {reg.describe_controls(cur)}   |   saved: {reg.describe_controls(reg.load_controls(c['id'], OUT_ROOT))}")
+
+
+def _focus_dict(manual, focus):
+    return {"focus_automatic_continuous": 0 if manual else 1, **({"focus_absolute": int(focus)} if manual else {})}
+
+
+def controls_apply(label, manual, focus):
+    c = list_cameras().get(label)
+    if not c:
+        raise gr.Error("Select a camera.")
+    probs = reg.apply_controls(c["device"], _focus_dict(manual, focus))
+    return ("Applied: " + reg.describe_controls(_focus_dict(manual, focus))) if not probs else "Problems: " + "; ".join(probs)
+
+
+def controls_save(label, manual, focus):
+    c = list_cameras().get(label)
+    if not c:
+        raise gr.Error("Select a camera.")
+    reg.save_controls(c["id"], _focus_dict(manual, focus), OUT_ROOT)
+    probs = reg.apply_controls(c["device"], _focus_dict(manual, focus))
+    note = "" if not probs else "  (could not apply right now: " + "; ".join(probs) + ")"
+    return f"Saved for {c['role'] or c['id']}: {reg.describe_controls(_focus_dict(manual, focus))}. " \
+           f"It is re-applied every time this app opens the camera.{note}", cam_info(label)[1]
+
+
+def _sharp_now(n: int = 4) -> float:
+    for _ in range(3):
+        CAM.latest()
+        time.sleep(0.15)
+    vals = []
+    for _ in range(n):
+        f = CAM.latest()
+        if f is not None:
+            vals.append(float(cv2.Laplacian(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()))
+        time.sleep(0.12)
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def focus_sweep(label, res):
+    """Autofocus off, coarse sweep then fine sweep; sets the sharpest value (does not save it)."""
+    open_cam(label, res)
+    c = list_cameras()[label]
+    if CAM.wait_frame() is None:
+        raise gr.Error("No frames from the camera.")
+    reg.apply_controls(c["device"], {"focus_automatic_continuous": 0})
+    results: dict[int, float] = {}
+
+    def probe(v):
+        reg.apply_controls(c["device"], {"focus_absolute": v}, settle=1.0)
+        results[v] = _sharp_now()
+
+    for v in range(0, 251, 10):
+        probe(v)
+    best = max(results, key=results.get)
+    for v in range(max(0, best - 8), min(250, best + 8) + 1, 2):
+        if v not in results:
+            probe(v)
+    best = max(results, key=results.get)
+    reg.apply_controls(c["device"], {"focus_absolute": best}, settle=1.0)
+    return True, best, f"Sharpest focus_absolute = {best} (sharpness {results[best]:.0f}). Applied, not saved yet: press Save."
+
+
 # --------------------------------------------------------------------------- capture callbacks
 def cam_info(label: str):
     c = list_cameras().get(label)
@@ -206,7 +277,8 @@ def cam_info(label: str):
         return "", ""
     calib = reg.calibration_path(c["role"], OUT_ROOT).exists() if c["role"] else False
     return c["role"], (f"id: {c['id']}\nusb port: {c['port']}   serial: {c['serial'] or 'none'}\n"
-                       f"calibration: {'found' if calib else 'not yet'}")
+                       f"calibration: {'found' if calib else 'not yet'}   saved camera controls: "
+                       f"{reg.describe_controls(reg.load_controls(c['id'], OUT_ROOT))}")
 
 
 def save_role(label: str, role: str):
@@ -401,7 +473,9 @@ def inspect_method(run, method):
 def save_calibration(label, run, method):
     if run is None or not method:
         raise gr.Error("Compute a calibration first.")
-    out = cal.save_calibration(run, method, OUT_ROOT / folder(label))
+    c = list_cameras().get(label)
+    out = cal.save_calibration(run, method, OUT_ROOT / folder(label),
+                               controls=reg.load_controls(c["id"], OUT_ROOT) if c else None)
     return f"Saved {method} -> {out}"
 
 
@@ -436,7 +510,7 @@ def build() -> gr.Blocks:
             refresh = gr.Button("Refresh camera list", size="sm", scale=1)
             role = gr.Textbox(label="Role (e.g. wrist, side)", value=cam_info(first)[0], scale=2)
             save = gr.Button("Save role", size="sm", scale=1)
-        ident = gr.Textbox(label="Camera identity", lines=2, interactive=False, value=cam_info(first)[1])
+        ident = gr.Textbox(label="Camera identity", lines=3, interactive=False, value=cam_info(first)[1])
         with gr.Accordion("Image quality thresholds (used by the live check and by calibration)", open=False):
             with gr.Row():
                 min_tags = gr.Slider(4, 100, ag.default_thresholds(SPEC).min_tags, step=1, label="min tags / corners seen")
@@ -461,6 +535,15 @@ def build() -> gr.Blocks:
                         with gr.Row():
                             snap = gr.Button("Snap one", size="sm")
                             rel = gr.Button("Release camera", size="sm")
+                        with gr.Accordion("Camera focus (calibration needs it locked)", open=True):
+                            f_manual = gr.Checkbox(False, label="Manual focus (autofocus off)")
+                            f_val = gr.Slider(0, 250, 20, step=1, label="Focus (0 = far/infinity, 250 = near)")
+                            with gr.Row():
+                                f_read = gr.Button("Read from camera", size="sm")
+                                f_apply = gr.Button("Apply", size="sm")
+                            with gr.Row():
+                                f_find = gr.Button("Find sharpest", size="sm")
+                                f_save = gr.Button("Save for this camera", variant="primary", size="sm")
                     with gr.Column(scale=2):
                         live = gr.Image(label="Live preview", height=420, interactive=False)
                         verdict = gr.Textbox(label="Live verdict", interactive=False)
@@ -527,6 +610,11 @@ def build() -> gr.Blocks:
         cam.change(on_camera_change, cam, [session, role, ident, sessions])
         save.click(save_role, [cam, role], [cam, status])
         session.change(load_session, [cam, session, *th], gallery)
+        # camera controls
+        f_read.click(controls_read, cam, [f_manual, f_val, status])
+        f_apply.click(controls_apply, [cam, f_manual, f_val], status)
+        f_find.click(focus_sweep, [cam, res], [f_manual, f_val, status])
+        f_save.click(controls_save, [cam, f_manual, f_val], [status, ident])
         # capture
         run = start.click(capture, [cam, res, interval, count, only_good, *th], [status, gallery, session, sessions])
         stop.click(lambda: "Stopped", None, status, cancels=[run])

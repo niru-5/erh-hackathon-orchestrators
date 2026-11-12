@@ -170,7 +170,7 @@ def comparison_rows(run_: CalibRun) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- save / weed on disk
-def save_calibration(run_: CalibRun, method: str, role_dir: Path) -> Path:
+def save_calibration(run_: CalibRun, method: str, role_dir: Path, controls: dict | None = None) -> Path:
     r = run_.results[method]
     if not r.ok:
         raise ValueError(f"{method} failed: {r.error}")
@@ -186,6 +186,8 @@ def save_calibration(run_: CalibRun, method: str, role_dir: Path) -> Path:
         "board": {**asdict(run_.spec), "description": run_.spec.describe()},
         "created": datetime.now().isoformat(timespec="seconds"),
     }
+    if controls:  # intrinsics are only valid at this focus
+        doc["camera_controls"] = {k: int(v) for k, v in controls.items()}
     text = yaml.safe_dump(doc, sort_keys=False)
     (role_dir / "calibration" / f"{method.replace(':', '_')}.yaml").write_text(text)
     out = role_dir / "calibration.yaml"

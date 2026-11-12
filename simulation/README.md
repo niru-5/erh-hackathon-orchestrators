@@ -87,3 +87,20 @@ from camera_registry import find_device, load_calibration   # simulation/tools
 dev = find_device("wrist")        # /dev/videoN currently holding that role (None if unplugged)
 calib = load_calibration("wrist") # dict from calibration.yaml, or None
 ```
+
+**Camera focus lock.** Intrinsics depend on focus, so a calibrated camera must be used at the focus it was calibrated at.
+The C920 autofocuses by default (and forgets a manual setting when unplugged or rebooted), so the controls are stored per
+camera in `real_setup/cameras/cameras.yaml` (`controls:`) and **re-applied every time the capture app opens the camera**.
+In the Capture tab: *Manual focus* + the slider (0 = far, 250 = near), *Apply*, *Find sharpest* (sweeps and picks the
+sharpest value for what the camera sees; hold the board at your working distance first), then *Save for this camera*.
+Saving a calibration also records the focus in `calibration.yaml` (`camera_controls`). From code or a shell:
+
+```python
+from camera_registry import open_capture
+cap = open_capture("side", (1280, 720))   # cv2.VideoCapture with the saved focus lock applied first. Use this for any video capture
+```
+```bash
+python simulation/tools/camera_registry.py list                                   # roles, ids, saved controls
+python simulation/tools/camera_registry.py save side focus_automatic_continuous=0 focus_absolute=20
+python simulation/tools/camera_registry.py apply side                             # re-apply after a replug
+```

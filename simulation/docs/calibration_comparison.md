@@ -86,8 +86,10 @@ principal point near (640, 360); treat the numbers above as "not yet calibrated"
 
 ## How to get a calibration worth saving
 
-1. **Lock focus and exposure.** The C920 autofocuses, and focus changes the focal length:
-   `v4l2-ctl -d /dev/video0 -c focus_automatic_continuous=0 -c focus_absolute=<value>`, and use a fixed exposure.
+1. **Lock focus and exposure.** The C920 autofocuses, and focus changes the focal length. Use the focus panel in the
+   Capture tab (it saves the lock per camera and re-applies it on every open), or by hand: first
+   `v4l2-ctl -d /dev/video0 -c focus_automatic_continuous=0`, then, as a separate command,
+   `-c focus_absolute=<0-250>` (higher = nearer). Use a fixed exposure too.
 2. **Hold the board still** for each shot (use the 2 s interval: move, then wait for the countdown); motion blur is the
    main reason tags fail to decode.
 3. **Keep the board flat**: tape the print to a rigid board. Hand-held paper bends, which shows up as ~2-3 px of residual.
