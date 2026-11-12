@@ -26,3 +26,35 @@ aruco marker size =
 121.3 = 6*x + 5*y
 x = 16.1
 y = 4.8
+
+
+
+
+pawn 
+base diameter -> 12.2 mm
+height -> 17.9 mm
+head diameter 7.6 mm
+
+elephant
+base diameter 12.1 mm
+height 20.2 mm
+top diameter  10.1 mm
+
+bishop 
+base diameter -> 12.5 mm
+height 27.1 mm
+top diameter 9.5 mm
+
+minister ->
+base diameter -> 12.5mm
+height 27.0 mm
+top diameter -> 10.0 mm
+
+king -> 
+base diameter 12.7 mm
+height -> 33.8 mm
+top diameter 10.8 mm
+
+horse ->
+diameter at the bottom -> 12.2 mm
+horse height -> 22mm

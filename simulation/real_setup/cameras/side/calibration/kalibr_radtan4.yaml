@@ -1,0 +1,42 @@
+method: kalibr:radtan4
+model: pinhole-radtan (Kalibr-style, own implementation)
+image_size:
+- 1280
+- 720
+camera_matrix:
+- - 811.0249121925814
+  - 0.0
+  - 670.1064684803321
+- - 0.0
+  - 813.4496812902313
+  - 315.0386285994634
+- - 0.0
+  - 0.0
+  - 1.0
+dist_coeffs:
+- -0.01342597941809109
+- -0.07669107578315851
+- -0.008307880546012142
+- 0.0004972924628002772
+- 0.0
+intrinsics:
+  fx: 811.0249
+  fy: 813.4497
+  cx: 670.1065
+  cy: 315.0386
+rms_px: 0.5769
+n_images: 35
+board:
+  kind: checkerboard
+  family: 36h11
+  cols: 11
+  rows: 11
+  tag_size: 0.01
+  spacing: 0.0047
+  marker_ratio: 0.7
+  description: Checkerboard 11x11 squares of 10 mm -> 10x10 inner corners, 110 x 110
+    mm
+created: '2026-11-12T19:49:21'
+camera_controls:
+  focus_automatic_continuous: 0
+  focus_absolute: 20

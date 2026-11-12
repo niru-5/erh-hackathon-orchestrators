@@ -1,6 +1,9 @@
-# AprilGrid calibration target: ids row-major (id = row*cols + col); sizes in metres, measured ~16 mm tag / ~5 mm gap
+# Calibration target. kind: aprilgrid | checkerboard | charuco. Sizes in metres.
+# cols x rows = tags (aprilgrid) or SQUARES (checkerboard / charuco); tag_size = tag or square side.
+kind: checkerboard
 family: 36h11
-cols: 12
-rows: 9
-tag_size: 0.016
-spacing: 0.005
+cols: 11
+rows: 11
+tag_size: 0.01
+spacing: 0.0047
+marker_ratio: 0.7

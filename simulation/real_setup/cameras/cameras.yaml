@@ -1,0 +1,7 @@
+roles:
+  side: 046d:08e5@1-5
+  wrist: 05a3:9230@1-3
+controls:
+  046d:08e5@1-5:
+    focus_automatic_continuous: 0
+    focus_absolute: 20

@@ -1,0 +1,42 @@
+method: mrcal:OPENCV5
+model: OPENCV5
+image_size:
+- 1280
+- 720
+camera_matrix:
+- - 811.5975236
+  - 0.0
+  - 670.4554269
+- - 0.0
+  - 813.9400024
+  - 316.0751952
+- - 0.0
+  - 0.0
+  - 1.0
+dist_coeffs:
+- -0.01205435863
+- -0.07684366796
+- -0.008122071858
+- 0.0007070347543
+- 0.0002932511159
+intrinsics:
+  fx: 811.5975
+  fy: 813.94
+  cx: 670.4554
+  cy: 316.0752
+rms_px: 0.5774
+n_images: 35
+board:
+  kind: checkerboard
+  family: 36h11
+  cols: 11
+  rows: 11
+  tag_size: 0.01
+  spacing: 0.0047
+  marker_ratio: 0.7
+  description: Checkerboard 11x11 squares of 10 mm -> 10x10 inner corners, 110 x 110
+    mm
+created: '2026-11-12T19:49:03'
+camera_controls:
+  focus_automatic_continuous: 0
+  focus_absolute: 20

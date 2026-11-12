@@ -1,0 +1,39 @@
+method: opencv:4
+model: radtan4
+image_size:
+- 1280
+- 720
+camera_matrix:
+- - 522.1498226864705
+  - 0.0
+  - 642.4477811013461
+- - 0.0
+  - 525.9912333941329
+  - 413.4110815855346
+- - 0.0
+  - 0.0
+  - 1.0
+dist_coeffs:
+- 0.08362925233222027
+- -0.037346082730926364
+- 0.030478186899311973
+- 0.005085146821689387
+- 0.0
+intrinsics:
+  fx: 522.1498
+  fy: 525.9912
+  cx: 642.4478
+  cy: 413.4111
+rms_px: 1.1454
+n_images: 40
+board:
+  kind: checkerboard
+  family: 36h11
+  cols: 11
+  rows: 11
+  tag_size: 0.01
+  spacing: 0.0047
+  marker_ratio: 0.7
+  description: Checkerboard 11x11 squares of 10 mm -> 10x10 inner corners, 110 x 110
+    mm
+created: '2026-11-12T19:54:04'
