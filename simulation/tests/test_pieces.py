@@ -14,7 +14,7 @@ from mujoco_env import pieces as P  # noqa: E402
 
 # measurements.yaml (mm): height, base diameter, top diameter (None = not measured)
 MEAS = {"pawn": (17.9, 12.2, 7.6), "rook": (20.2, 12.1, 10.1), "bishop": (27.1, 12.5, 9.5),
-        "queen": (27.0, 12.5, 10.0), "king": (33.8, 12.7, 10.8), "knight": (None, 12.2, None)}
+        "queen": (27.0, 12.5, 10.0), "king": (33.8, 12.7, 10.8), "knight": (22.0, 12.2, None)}
 MASS_G = {"pawn": 1.3, "knight": 1.875, "rook": 1.75, "bishop": 1.75, "queen": 2.0, "king": 2.5}
 
 
@@ -28,7 +28,7 @@ def load_stl(path):
 def test_api():
     assert P.PIECE_TYPES == ["pawn", "rook", "knight", "bishop", "queen", "king"]
     assert "piece_white" in P.piece_assets_xml() and "piece_black" in P.piece_assets_xml()
-    assert P.piece_info("knight")["estimated"] and not P.piece_info("pawn")["estimated"]
+    assert not P.piece_info("knight")["estimated"] and not P.piece_info("pawn")["estimated"]
 
 
 @pytest.mark.parametrize("t", P.PIECE_TYPES)

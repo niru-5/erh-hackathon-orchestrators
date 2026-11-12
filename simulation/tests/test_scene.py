@@ -23,12 +23,15 @@ def test_square_center_values():
     assert (x, y) == pytest.approx((0.1117375, 0.2071375), abs=1e-9)
     x, y = square_center("h", 8)
     assert (x, y) == pytest.approx((0.2382625, 0.3336625), abs=1e-9)
-    # ranks along +x, files along +y
-    assert square_center("a", 2)[0] > square_center("a", 1)[0]
-    assert square_center("a", 2)[1] == square_center("a", 1)[1]
-    assert square_center("b", 1)[1] > square_center("a", 1)[1]
+    # files along +x, ranks along +y (confirmed from the real photos: white king a1, black king a8, black rook h1)
+    assert square_center("a", 2)[1] > square_center("a", 1)[1]
+    assert square_center("a", 2)[0] == square_center("a", 1)[0]
+    assert square_center("b", 1)[0] > square_center("a", 1)[0]
     assert square_center(0, 1) == square_center("a", 1)
-    assert square_center("e", 4)[0] == pytest.approx(0.1027 + 3.5 * 0.018075)
+    assert square_center("e", 4)[0] == pytest.approx(0.1027 + 4.5 * 0.018075)
+    assert square_center("e", 4)[1] == pytest.approx(0.1981 + 3.5 * 0.018075)
+    # the real photo layout: kings on the left edge (low x) at both ends, black rook at the far-x end of white's rank
+    assert square_center("h", 1)[0] > square_center("a", 1)[0] and square_center("a", 8)[1] > square_center("a", 1)[1]
 
 
 def test_all_squares_inside_playing_area():
@@ -64,9 +67,9 @@ def test_start_piece_placement():
     m = load_model("start")
     d = reset_rest(m)
     pos = {m.body(i).name: d.xpos[i] for i in piece_bodies(m)}
-    assert pos["white_queen_d1"][:2] == pytest.approx(square_center("d", 1), abs=1e-4)  # white queen d1, ranks along x
+    assert pos["white_queen_d1"][:2] == pytest.approx(square_center("d", 1), abs=1e-4)  # white queen d1
     assert pos["black_king_e8"][:2] == pytest.approx(square_center("e", 8), abs=1e-4)
-    assert pos["white_rook_a1"][0] < pos["black_rook_a8"][0]
+    assert pos["white_rook_a1"][1] < pos["black_rook_a8"][1]  # white is on the robot side (low y)
     for p in pos.values():  # base-bottom centre on the board surface
         assert p[2] == pytest.approx(0.0221, abs=2e-4)
 

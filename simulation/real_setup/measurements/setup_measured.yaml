@@ -42,9 +42,9 @@ board:
 
 board_frame:                        # chosen convention
   a1: the playing-area corner closest to the origin (0,0)
-  ranks_numbers_along: +x           # rank 1..8 increase with x
-  files_letters_along: +y           # file a..h increase with y
-  square_center_xy_mm: "x = 102.7 + (rank - 0.5) * 18.075 ;  y = 198.1 + (file_index + 0.5) * 18.075   # file a = 1"
+  files_letters_along: +x           # file a..h increase with x  (CHANGED 2026-11-12 from the real piece photos: white king a1, black king a8, black rook h1)
+  ranks_numbers_along: +y           # rank 1..8 increase with y; white is on the robot's side
+  square_center_xy_mm: "x = 102.7 + (file_index + 0.5) * 18.075 ;  y = 198.1 + (rank - 0.5) * 18.075   # file a = index 0"
   a1_center_xy_mm: [111.7, 207.1]
   h8_center_xy_mm: [238.3, 333.7]
 

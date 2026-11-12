@@ -44,7 +44,7 @@ enough that a policy trained with RL in sim can be fine-tuned on a little real d
 - **Units:** SI inside MuJoCo (m, kg, rad). Policy-facing values are lerobot degrees for the arm and 0–100 % for the gripper, as in the real data.
 - **Joint order:** `shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper`.
 - **World frame:** the layout frame of `real_setup/layout.drawio`: origin at the table corner on the robot's edge, +x along that edge (420 mm), +y away from the robot (600 mm), +z up from the table top. The robot base is at y = 0 and faces +y.
-- **Board frame (decided 2026-11-12):** a1 is the playing-area corner closest to the origin. Rank numbers 1..8 increase along +x, file letters a..h along +y. `square_center(file, rank)` is defined once, from `setup_measured.yaml`.
+- **Board frame (decided 2026-11-12):** a1 is the playing-area corner closest to the origin. File letters a..h increase along +x, rank numbers 1..8 along +y (so white is on the robot's side, and from the robot a is on the left). Confirmed from the real photos 2026-11-12. `square_center(file, rank)` is defined once, from `setup_measured.yaml`.
 - **Cameras:** exactly two, named `wrist` and `side`, 640×480, 30 fps.
 - **Control:** 30 Hz policy rate, 500 Hz physics (about 16 substeps).
 - **Determinism:** every reset takes a seed; same seed, same frames.

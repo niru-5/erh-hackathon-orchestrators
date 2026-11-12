@@ -75,7 +75,7 @@ def contact_sheet(model, data, names, size=(640, 480)) -> np.ndarray:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--layout", default="start", choices=["start", "single", "empty"])
+    ap.add_argument("--layout", default="start", choices=["start", "single", "empty", "photo_210615"])
     ap.add_argument("--square", default=None, help="square for --layout single, e.g. e4")
     ap.add_argument("--piece", default=None, help="piece type for --layout single")
     ap.add_argument("--viewer", action="store_true")

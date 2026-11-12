@@ -54,10 +54,10 @@ pieces:
       - {t: cyl, z0: 14.4, z1: 15.4, r: 4.0}
       - {t: cyl, z0: 15.4, z1: 20.2, r: 5.05}
   knight:
-    measured: {height_mm: 24.5, base_diameter_mm: 12.2, top_diameter_mm: null}
+    measured: {height_mm: 22.0, base_diameter_mm: 12.2, top_diameter_mm: null}
     mass_g: 1.875                        # 7.5 g / 4
     grasp_height_mm: 13.0                # neck, across the thin (y) direction (guess)
-    estimated: true                      # HEIGHT NOT MEASURED: ~24.5 mm from photo scale (base 12.2 mm = known), +-1.5 mm
+    estimated: false                     # height measured by the user 2026-11-12 (22 mm); the earlier photo-scale estimate was 24.5 mm
     notes: "revolved base d12.2 + extruded horse head, muzzle toward +x (piece local frame)"
     collision:
       - {t: cyl, z0: 0.0, z1: 2.0, r: 6.1}

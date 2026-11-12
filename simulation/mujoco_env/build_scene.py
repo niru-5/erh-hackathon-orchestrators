@@ -70,8 +70,8 @@ def make_board_texture(w: dict, path: Path) -> Path:
     img[inlay] = _rgb(b["inlay_rgb"])
     inside = (X >= px0) & (X <= px1) & (Y >= py0) & (Y <= py1)
     sq = b["square_mm"]
-    rank0 = np.clip(((X - px0) // sq).astype(int), 0, 7)  # rank-1, along x
-    file0 = np.clip(((Y - py0) // sq).astype(int), 0, 7)  # file index, along y
+    file0 = np.clip(((X - px0) // sq).astype(int), 0, 7)  # file index, along x
+    rank0 = np.clip(((Y - py0) // sq).astype(int), 0, 7)  # rank-1, along y
     dark = ((rank0 + file0) % 2 == 0) == bool(b.get("a1_dark", True))
     sqcol = np.where(dark[..., None], _rgb(b["dark_square_rgb"]), _rgb(b["light_square_rgb"]))
     sqcol = sqcol * (1 + 0.10 * g)[..., None]
@@ -127,6 +127,8 @@ def normalize_layout(layout, w: dict, **kw) -> dict[str, tuple[str, str]]:
         s = dict(w["pieces"]["single"])
         s.update({k[len("single_"):]: v for k, v in kw.items() if k.startswith("single_")})
         return {s["square"]: (s["color"], s["type"])}
+    if layout == "photo_210615":  # the 3-piece layout of real_setup/cameras/side/20261112_210615
+        return {"a1": ("white", "king"), "a8": ("black", "king"), "h1": ("black", "rook")}
     if layout == "start":
         out = {}
         for fi, f in enumerate(FILES):
