@@ -1,0 +1,118 @@
+# Chess piece parameters for the MuJoCo sim. Every number used by
+# simulation/mujoco_env/pieces.py and simulation/assets/chess/make_pieces.py lives here.
+# Provenance: simulation/real_setup/measurements/measurements.yaml (user notes, mm and g)
+# plus the phone photos in simulation/real_setup/photos/Chess_pieces_photos-*/.
+# Names in the notes: elephant = rook, minister = queen, horse = knight.
+# Pieces are turned wood (white = pale boxwood-like, black = dark reddish-brown wood), matte/satin.
+
+colors:                       # RGBA, picked from the photos
+  white: [0.88, 0.80, 0.63, 1.0]
+  black: [0.40, 0.22, 0.13, 1.0]
+material:                     # MuJoCo <material> attributes (matte wood)
+  specular: 0.15
+  shininess: 0.2
+
+# Contact settings for a 1-2 g object. friction is a GUESS (wood on wood/felt), to be tuned
+# against real grasps. solref/solimp/margin tuned in check_pieces.py (see docs in pieces.py).
+contact:
+  condim: 4
+  friction: [0.8, 0.01, 0.001]
+  solref: [0.004, 1.0]
+  solimp: [0.95, 0.99, 0.001, 0.5, 2]
+  margin: 0.0
+  gap: 0.0
+
+mesh_dir: simulation/assets/chess      # relative to repo root; absolute path is resolved at runtime
+mesh_segments: 64                      # lathe angular resolution
+
+pieces:
+  pawn:
+    measured: {height_mm: 17.9, base_diameter_mm: 12.2, top_diameter_mm: 7.6}   # top = head sphere
+    mass_g: 1.3                          # 13 g / 10 pawns
+    grasp_height_mm: 13.5                # head sphere equator (guess)
+    estimated: false
+    notes: "base d12.2 h17.9 head d7.6 measured; profile (rings, cove, collar, neck, ball head) from photos"
+    # collision stack, mm, base-bottom origin. cyl: z0,z1,r ; sphere: zc,r ; box: x0..z1
+    collision:
+      - {t: cyl, z0: 0.0, z1: 2.0, r: 6.1}
+      - {t: cyl, z0: 2.0, z1: 3.0, r: 4.6}
+      - {t: cyl, z0: 3.0, z1: 8.6, r: 2.7}
+      - {t: cyl, z0: 8.6, z1: 9.7, r: 4.0}
+      - {t: cyl, z0: 9.7, z1: 11.5, r: 2.3}
+      - {t: sphere, zc: 14.1, r: 3.8}
+  rook:
+    measured: {height_mm: 20.2, base_diameter_mm: 12.1, top_diameter_mm: 10.1}
+    mass_g: 1.75                         # 7 g / 4
+    grasp_height_mm: 10.5                # stem below the flared top (guess)
+    estimated: false
+    notes: "crenellated top (6 merlons) seen in photos; stem narrower than top"
+    collision:
+      - {t: cyl, z0: 0.0, z1: 2.0, r: 6.05}
+      - {t: cyl, z0: 2.0, z1: 3.0, r: 4.9}
+      - {t: cyl, z0: 3.0, z1: 13.0, r: 3.9}
+      - {t: cyl, z0: 13.0, z1: 14.4, r: 4.3}
+      - {t: cyl, z0: 14.4, z1: 15.4, r: 4.0}
+      - {t: cyl, z0: 15.4, z1: 20.2, r: 5.05}
+  knight:
+    measured: {height_mm: 24.5, base_diameter_mm: 12.2, top_diameter_mm: null}
+    mass_g: 1.875                        # 7.5 g / 4
+    grasp_height_mm: 13.0                # neck, across the thin (y) direction (guess)
+    estimated: true                      # HEIGHT NOT MEASURED: ~24.5 mm from photo scale (base 12.2 mm = known), +-1.5 mm
+    notes: "revolved base d12.2 + extruded horse head, muzzle toward +x (piece local frame)"
+    collision:
+      - {t: cyl, z0: 0.0, z1: 2.0, r: 6.1}
+      - {t: cyl, z0: 2.0, z1: 3.0, r: 4.8}
+      - {t: cyl, z0: 3.0, z1: 6.0, r: 3.9}
+      - {t: cyl, z0: 6.0, z1: 8.0, r: 4.9}
+      - {t: box, x0: -3.6, x1: 3.2, y0: -2.9, y1: 2.9, z0: 8.0, z1: 14.5}
+      - {t: box, x0: -3.8, x1: 3.0, y0: -2.4, y1: 2.4, z0: 14.5, z1: 22.0}
+      - {t: box, x0: 3.0, x1: 6.0, y0: -1.9, y1: 1.9, z0: 14.8, z1: 19.0}
+  bishop:
+    measured: {height_mm: 27.1, base_diameter_mm: 12.5, top_diameter_mm: 9.5}   # top = mitre
+    mass_g: 1.75                         # 7 g / 4
+    grasp_height_mm: 10.5                # stem below collar (guess)
+    estimated: false
+    notes: "mitre (ellipsoid) with ball finial; slit omitted"
+    collision:
+      - {t: cyl, z0: 0.0, z1: 2.0, r: 6.25}
+      - {t: cyl, z0: 2.0, z1: 3.0, r: 5.0}
+      - {t: cyl, z0: 3.0, z1: 12.8, r: 3.0}
+      - {t: cyl, z0: 12.8, z1: 14.2, r: 4.2}
+      - {t: cyl, z0: 14.2, z1: 15.6, r: 2.7}
+      - {t: cyl, z0: 15.6, z1: 18.0, r: 4.0}
+      - {t: cyl, z0: 18.0, z1: 21.5, r: 4.75}
+      - {t: cyl, z0: 21.5, z1: 24.0, r: 3.0}
+      - {t: sphere, zc: 25.5, r: 1.6}
+  queen:
+    measured: {height_mm: 27.0, base_diameter_mm: 12.5, top_diameter_mm: 10.0}  # top = crown
+    mass_g: 2.0                          # 4 g / 2
+    grasp_height_mm: 10.0
+    estimated: false
+    notes: "flared crown with ball finial"
+    collision:
+      - {t: cyl, z0: 0.0, z1: 2.0, r: 6.25}
+      - {t: cyl, z0: 2.0, z1: 3.0, r: 5.0}
+      - {t: cyl, z0: 3.0, z1: 12.8, r: 3.0}
+      - {t: cyl, z0: 12.8, z1: 14.2, r: 4.2}
+      - {t: cyl, z0: 14.2, z1: 16.0, r: 2.8}
+      - {t: cyl, z0: 16.0, z1: 19.5, r: 3.8}
+      - {t: cyl, z0: 19.5, z1: 23.4, r: 5.0}
+      - {t: cyl, z0: 23.4, z1: 24.2, r: 3.3}
+      - {t: sphere, zc: 25.5, r: 1.5}
+  king:
+    measured: {height_mm: 33.8, base_diameter_mm: 12.7, top_diameter_mm: 10.8}  # top = crown
+    mass_g: 2.5                          # 5 g / 2
+    grasp_height_mm: 12.0
+    estimated: false
+    notes: "crown + cross finial (cross arm span 4.4 mm)"
+    collision:
+      - {t: cyl, z0: 0.0, z1: 2.0, r: 6.35}
+      - {t: cyl, z0: 2.0, z1: 3.0, r: 5.1}
+      - {t: cyl, z0: 3.0, z1: 14.8, r: 3.1}
+      - {t: cyl, z0: 14.8, z1: 16.2, r: 4.5}
+      - {t: cyl, z0: 16.2, z1: 18.0, r: 2.8}
+      - {t: cyl, z0: 18.0, z1: 22.0, r: 4.2}
+      - {t: cyl, z0: 22.0, z1: 27.2, r: 5.4}
+      - {t: cyl, z0: 27.2, z1: 28.6, r: 2.2}
+      - {t: box, x0: -0.8, x1: 0.8, y0: -0.8, y1: 0.8, z0: 28.6, z1: 33.8}
+      - {t: box, x0: -2.2, x1: 2.2, y0: -0.8, y1: 0.8, z0: 31.0, z1: 32.6}

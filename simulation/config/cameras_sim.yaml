@@ -1,0 +1,43 @@
+# Simulated cameras. Frames: world = layout frame (origin at table corner on the robot's edge,
+# +x along that edge, +y away from robot, z up from the table top), metres.
+# Intrinsics are NOT stored here: they are read from the calibration.yaml named below.
+# Every pose number says where it came from and whether it is PROVISIONAL.
+
+side:
+  calibration: real_setup/cameras/side/calibration.yaml   # relative to simulation/
+  # Logitech C920, manual focus 20 (see cameras.yaml focus lock), calibrated at 1280x720.
+  position_m: [0.500, 0.400, 0.360]
+  position_source: >
+    Given by the user (x=500 y=400 z=360 mm). WARNING: the table is only 420 mm wide in x, so
+    x=500 is 80 mm beyond the right table edge. Possibly measured from another origin: confirm.
+  orientation:
+    mode: look_at              # look_at | xyaxes_cv (explicit rotation, columns = cam x,y axes in world)
+    look_at_m: [0.175, 0.2675, 0.0221]   # board outer-box centre, top surface
+    up_world: [0.0, 0.0, 1.0]
+    roll_deg: 0.0
+    source: no real side-camera frame shows the scene (calibration frames are a hand-held checkerboard); fallback look-at.
+  provisional: true
+  needs: >
+    One frame of the real side camera (focus lock applied, 1280x720) with the empty board in view
+    and, ideally, the robot base. Solve with cv2.solvePnP on the board playing-area corners.
+
+wrist:
+  calibration: real_setup/cameras/wrist/calibration.yaml
+  # Kalibr-style radtan4 fit, rms 1.16 px (worse than the side fit); cy=414 is well below image centre.
+  parent_body: gripper       # of simulation/assets/so101/so101.xml
+  position_m: [0.0, -0.045, -0.030]      # in the 'gripper' body frame
+  look_at_m: [-0.0079, 0.0, -0.098]      # the grasp centre (site gripperframe), gripper frame
+  up_gripper: [1.0, 0.0, 0.0]            # image "up" direction in the gripper frame
+  roll_deg: 0.0
+  # Optional explicit override (wins over look_at): 3x3 rotation, columns = OpenCV cam x(right), y(down), z(fwd)
+  # expressed in the gripper frame.
+  rotation_cv_override: null
+  source: >
+    Estimated from the wrist camera STLs: the camera sits on the fixed jaw side of the wrist, looking along
+    the gripper (-z of the 'gripper' frame) at the fingertips. The STL mount frame could not be tied to the
+    gripper frame without CAD data.
+  provisional: true
+  needs: hand-eye calibration (TODO B3) - gripper-to-camera transform.
+  show_mount_visual: false   # STL frames not verified against the gripper body; off by default
+
+native_size: [1280, 720]

@@ -232,3 +232,6 @@ simulation/.venv-sim/
 # draw.io backups
 .$*.bkp
 simulation/out/
+
+# generated scene MJCF (simulation/mujoco_env/build_scene.py)
+simulation/mujoco_env/generated/

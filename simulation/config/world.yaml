@@ -1,0 +1,72 @@
+# Single source of truth for the MuJoCo scene (A4). Units here: mm, g, degrees. Code converts to SI.
+# Source tags: [M] measured by the user, [L] layout.drawio label, [D] derived, [A] assumed (flagged in docs/scene.md), [P] photo-estimated.
+# Frame: layout frame. origin = table corner on the robot's edge, +x along that edge, +y away from the robot, z up, z=0 at the table top.
+
+table:
+  width_mm: 420            # [L] along x
+  length_mm: 600           # [L] along y
+  thickness_mm: 18         # [A] plausible slab thickness; the real table is a folding table (laminate over chipboard)
+  floor_depth_mm: 750      # [M] floor 750 mm below the top (visual plane only)
+  color_dark_rgb: [58, 34, 22]    # [P] sampled from top_down photo (the lamp light adds orange; this is the cooler tone)
+  color_light_rgb: [128, 82, 52]  # [P]
+  specular: 0.5            # [A] glossy laminate
+  shininess: 0.8           # [A]
+  reflectance: 0.0         # [A]
+  friction: [0.8, 0.005, 0.0001]   # [A] laminate vs plastic/wood piece
+
+robot_base:
+  origin_xy_mm: [175, 0]   # [A] x aligned with board centre (board x 85..265) - UNCONFIRMED; y=0 per layout "base center at y = 0"
+  origin_z_mm: 2.4         # [A] upstream base mesh is offset -2.4 mm below the base origin, so the origin sits 2.4 mm up; real clamp/plate height unknown
+  yaw_deg: 90              # [D] so101 arm extends along base +x at zero pose; +90 deg yaw makes it extend along world +y
+  # Rest pose (rad) the arm holds at start, ctrl = qpos. Folded arm, gripper above the robot side of the table.
+  rest_qpos:
+    shoulder_pan: 0.0
+    shoulder_lift: -1.60
+    elbow_flex: 1.50
+    wrist_flex: 0.90
+    wrist_roll: 0.0
+    gripper: 0.4
+
+board:
+  outer_x_mm: [85, 265]    # [L]
+  outer_y_mm: [175, 360]   # [L]
+  height_mm: 22.1          # [M] table to playing surface
+  playing_x_mm: [102.7, 247.3]   # [D] (180-144.6)/2 per side, UNCONFIRMED robot-side margin
+  playing_y_mm: [198.1, 342.7]   # [D] far margin 15+2.3, robot side 23.1 (clasp side)
+  square_mm: 18.075        # [D] 144.6 / 8 (measured 18.1)
+  border_mm: 15            # [L]
+  inlay_mm: [1.8, 2.3]     # [M?] light inlay line (x, y)
+  seam_y_mm: 267.5         # [D] fold seam across the middle of the board, runs along x
+  seam_width_mm: 1.0       # [A] drawn as a dark line in the texture only
+  light_square_rgb: [225, 190, 135]   # [P] top_down photo
+  dark_square_rgb: [140, 76, 38]      # [P]
+  border_rgb: [150, 88, 42]           # [P]
+  inlay_rgb: [235, 205, 150]          # [P]
+  side_rgb: [120, 70, 35]             # [P]
+  texture_px_per_mm: 6
+  friction: [0.9, 0.005, 0.0001]      # [A] wood vs piece; pieces agent may override per piece
+  a1_dark: true            # [A] standard: a1 is a dark square
+
+physics:
+  timestep: 0.002          # [A] 500 Hz (architecture.md)
+  cone: elliptic           # [A]
+  impratio: 10             # [A]
+  gravity: [0, 0, -9.81]
+  noslip_iterations: 0
+
+lights:                    # configurable until the user supplies lighting photos. pos in mm (world), dir = direction the light points.
+  headlight: {ambient: 0.3, diffuse: 0.1}   # soft global fill
+  items:
+    - {name: overhead,  type: spot, pos_mm: [175, 270, 1400], dir: [0, 0, -1], diffuse: 0.3, specular: 0.1, cutoff: 70, shadow: true}   # [A] ceiling light
+    - {name: window,    type: directional, pos_mm: [-1500, -1500, 1500], dir: [0.6, 0.6, -0.5], diffuse: 0.3, specular: 0.15, shadow: true}   # [P] behind-left of the robot (bicycle/window side)
+    - {name: lamp,      type: spot, pos_mm: [560, 150, 420], dir: [-0.8, 0.25, -0.5], diffuse: 0.4, specular: 0.2, cutoff: 50, shadow: true}   # [P] gooseneck lamp on the right (leader side) edge
+
+pieces:
+  start_layout: standard   # white on ranks 1-2, black on 7-8; back rank a..h = R N B Q K B N R
+  single: {square: e4, type: pawn, color: white}   # default for layout 'single'
+
+contact:
+  # Defaults applied to piece geoms when pieces.py does not define its own (see pieces.default_defaults_xml).
+  piece_friction: [0.8, 0.005, 0.0001]   # [A]
+  solref: [0.004, 1]       # [A] stiffer than default, for light pieces
+  solimp: [0.95, 0.99, 0.001]
