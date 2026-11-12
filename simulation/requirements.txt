@@ -1,0 +1,7 @@
+mujoco>=4.0
+mink
+gymnasium
+numpy
+opencv-python
+pyyaml
+pytest
