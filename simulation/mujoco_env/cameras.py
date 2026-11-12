@@ -139,9 +139,41 @@ def side_pose_cv() -> tuple[np.ndarray, np.ndarray]:
     return pos, look_at_rotation_cv(pos, o["look_at_m"], o["up_world"], o.get("roll_deg", 0.0))
 
 
+# Wrist camera mount + camera module, placed in the 'gripper' body exactly as in the upstream SO-ARM100 model
+# (Simulation/SO101/so101_new_calib_camera.xml, commit a758567). The camera STL is a 32x32 mm UVC board with the
+# lens barrel along its +z axis (barrel z 2..26 mm), so the optical axis is +z of the 'wrist_camera' body.
+MOUNT_POS = np.array([-0.0150, 0.0240, -0.0315])
+MOUNT_QUAT = np.array([0.4997981226682881, -0.5001999599912927, 0.4998017973423795, -0.5001999599912927])
+CAM_POS = np.array([-0.04941, -0.03813, 0.0175])          # in the mount frame
+CAM_QUAT = np.array([0.37978693649389456, -0.5964584309361936, -0.37978833153177, -0.596456240026065])
+
+
+def _quat_to_mat(q) -> np.ndarray:
+    w, x, y, z = np.asarray(q, float) / np.linalg.norm(q)
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+
+
+def wrist_cad_frame() -> tuple[np.ndarray, np.ndarray]:
+    """(position of the camera body origin, rotation) in the 'gripper' frame; rotation columns = camera-body axes."""
+    Rm = _quat_to_mat(MOUNT_QUAT)
+    Rc = _quat_to_mat(CAM_QUAT)
+    return MOUNT_POS + Rm @ CAM_POS, Rm @ Rc
+
+
 def wrist_pose_cv() -> tuple[np.ndarray, np.ndarray]:
     """(position, R_cv) of the wrist camera in the 'gripper' body frame."""
     c = _cfg()["wrist"]
+    if c.get("mode") == "cad":
+        p0, R = wrist_cad_frame()
+        pos = p0 + R @ np.array([0.0, 0.0, c["lens_z_m"]])
+        z = R[:, 2]                                   # optical axis = lens axis of the module
+        x0, y0 = R[:, 0], R[:, 1]
+        a = np.radians(c.get("roll_deg", 0.0))        # roll of the image about the optical axis
+        x = np.cos(a) * x0 + np.sin(a) * y0
+        y = np.cross(z, x)
+        return pos, np.stack([x, y, z], axis=1)
     pos = np.array(c["position_m"], float)
     if c.get("rotation_cv_override") is not None:
         return pos, np.array(c["rotation_cv_override"], float)
@@ -167,11 +199,18 @@ def wrist_mount_assets_xml() -> str:
 
 
 def wrist_mount_visual_xml() -> str:
-    """Visual-only geoms (no collision) for inside the 'gripper' body; '' when disabled."""
+    """The camera mount + camera module as two fixed child bodies of 'gripper' (visual only, masses as upstream)."""
     if not _cfg()["wrist"].get("show_mount_visual"):
         return ""
-    return ('<geom type="mesh" mesh="wrist_cam_mount" contype="0" conaffinity="0" group="2" rgba="0.2 0.2 0.2 1"/>'
-            '<geom type="mesh" mesh="wrist_cam_body" contype="0" conaffinity="0" group="2" rgba="0.1 0.1 0.1 1"/>')
+    f = lambda v: " ".join(f"{x:.10g}" for x in v)
+    return (
+        f'<body name="wrist_camera_mount" pos="{f(MOUNT_POS)}" quat="{f(MOUNT_QUAT)}">'
+        '<inertial pos="0 0 0" mass="0.02" diaginertia="1e-5 1e-5 1e-5"/>'
+        '<geom type="mesh" mesh="wrist_cam_mount" contype="0" conaffinity="0" group="2" mass="0" rgba="0.1 0.7 0.8 1"/>'
+        f'<body name="wrist_camera_module" pos="{f(CAM_POS)}" quat="{f(CAM_QUAT)}">'
+        '<inertial pos="0 0 0" mass="0.015" diaginertia="1e-5 1e-5 1e-5"/>'
+        '<geom type="mesh" mesh="wrist_cam_body" contype="0" conaffinity="0" group="2" mass="0" rgba="0.08 0.08 0.08 1"/>'
+        '</body></body>')
 
 
 # ----------------------------------------------------------------------------- lens distortion

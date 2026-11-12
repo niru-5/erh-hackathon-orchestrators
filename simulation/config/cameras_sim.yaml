@@ -27,19 +27,21 @@ wrist:
   calibration: real_setup/cameras/wrist/calibration.yaml
   # Kalibr-style radtan4 fit, rms 1.16 px (worse than the side fit); cy=414 is well below image centre.
   parent_body: gripper       # of simulation/assets/so101/so101.xml
-  position_m: [0.0, -0.045, -0.030]      # in the 'gripper' body frame
-  look_at_m: [-0.0079, 0.0, -0.098]      # the grasp centre (site gripperframe), gripper frame
-  up_gripper: [1.0, 0.0, 0.0]            # image "up" direction in the gripper frame
-  roll_deg: 0.0
-  # Optional explicit override (wins over look_at): 3x3 rotation, columns = OpenCV cam x(right), y(down), z(fwd)
-  # expressed in the gripper frame.
+  # CAD mode: the camera module sits where the upstream SO-ARM100 model puts it (mount + camera bodies in the
+  # gripper frame, see cameras.py MOUNT_*/CAM_*); optical axis = lens axis of the module (+z of the camera STL).
+  mode: cad
+  lens_z_m: 0.0245           # optical centre along the lens barrel from the module origin (barrel front is at 26.3 mm)
+  roll_deg: 0.0              # image roll about the optical axis; chosen so the jaw tips appear at the bottom centre like the real frames
+  # (ignored in CAD mode) legacy hand-placed pose
+  position_m: [0.0, -0.045, -0.030]
+  look_at_m: [-0.0079, 0.0, -0.098]
+  up_gripper: [1.0, 0.0, 0.0]
   rotation_cv_override: null
   source: >
-    Estimated from the wrist camera STLs: the camera sits on the fixed jaw side of the wrist, looking along
-    the gripper (-z of the 'gripper' frame) at the fingertips. The STL mount frame could not be tied to the
-    gripper frame without CAD data.
+    Upstream mount/camera placement (so101_new_calib_camera.xml) + lens axis from the camera STL. The roll and the
+    optical-centre depth are fitted by eye against real wrist frames (jaws visible at the bottom centre).
   provisional: true
-  needs: hand-eye calibration (TODO B3) - gripper-to-camera transform.
-  show_mount_visual: false   # STL frames not verified against the gripper body; off by default
+  needs: hand-eye calibration (TODO B3) to verify the gripper-to-camera transform.
+  show_mount_visual: true
 
 native_size: [1280, 720]

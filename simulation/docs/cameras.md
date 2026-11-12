@@ -31,8 +31,8 @@ refuses 1280x720.
 | Wrist intrinsics (1280x720, Kalibr-style radtan4, rms 1.16 px, 40 imgs) | calibrated, weaker fit |
 | Side position (0.536, 0.321, 0.343) m | SOLVED by solvePnP (see below); agrees with the user's measured (0.5, 0.4, 0.36) m to within 36/79/17 mm, which confirms the x origin beyond the table edge |
 | Side orientation | SOLVED (2026-11-12): cv2.solvePnP on the 7x7 inner board corners in `real_setup/cameras/side/20261112_205932/img_001.png`, 1.58 px rms, script `tools/solve_side_pose.py`. Assumes the board is at the layout position; an overlay of the sim render on the real frame matches the board and table edges (`out/side_overlay.png`), and the robot base is within ~40 px |
-| Wrist pose in `gripper` frame | PROVISIONAL guess: (0, -0.045, -0.03) m looking at the grasp centre, image-up = gripper +x. Needs hand-eye calibration (TODO B3). Override via `position_m`, `look_at_m`, `up_gripper`, `roll_deg` or `rotation_cv_override` |
-| Wrist mount/camera STLs | off by default: the mount STL is in mm in its own CAD frame and its placement on the gripper is unverified |
+| Wrist camera module + mount | ADDED 2026-11-12: the upstream SO-ARM100 placement (`wrist_camera_mount` + `wrist_camera_module` bodies in the `gripper` frame, constants in `cameras.py`), shown in teal like the real arm; masses as upstream (20 g + 15 g) |
+| Wrist pose (optical axis, roll) | CAD-based (`wrist.mode: cad`): optical axis = lens axis of the module (+z of the camera STL, barrel to 26 mm), optical centre 24.5 mm along it, roll 0 chosen so both jaw tips appear at the bottom centre like the real wrist frames. Still PROVISIONAL until a hand-eye calibration (B3) |
 
 ## What to capture next
 1. Side pose: one 1280x720 frame of the real side camera (focus lock applied, via `tools/capture_calib.py`) with the

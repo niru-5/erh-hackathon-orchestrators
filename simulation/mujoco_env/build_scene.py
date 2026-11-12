@@ -155,6 +155,10 @@ def _robot_parts(w: dict):
     defaults = "".join(ET.tostring(d, encoding="unicode") for d in root.findall("default"))
     base = root.find("worldbody").find("body[@name='base']")
     assets = root.find("asset")
+    teal = w.get("robot_base", {}).get("rgba")
+    for mat in assets.findall("material"):  # the printed parts of the real arm are teal, not upstream yellow
+        if teal and mat.get("rgba", "").startswith("1 0.82 0.12"):
+            mat.set("rgba", " ".join(str(v) for v in teal))
     for m in assets.findall("mesh"):
         m.set("file", str(ROOT / "assets" / "so101" / "assets" / m.get("file")))
     act = ET.tostring(root.find("actuator"), encoding="unicode")

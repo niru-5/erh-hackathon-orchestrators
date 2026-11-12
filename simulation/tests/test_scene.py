@@ -10,7 +10,8 @@ from build_scene import load_model, reset_rest  # noqa: E402
 from world import FILES, load_world, square_center  # noqa: E402
 
 W = load_world()
-BASE_AXIS_OFFSET = 0.0388353  # pan axis offset along base x in so101.xml
+BASE_Y = 0.031  # base origin y: back of the base footprint flush with the table edge
+BASE_AXIS_OFFSET = 0.0388353 + BASE_Y  # pan axis y (offset along base x in so101.xml + base origin y)
 ARM_Z0 = 0.0024
 
 
@@ -78,7 +79,7 @@ def test_robot_base_pose_and_heading():
     m = load_model("empty")
     d = reset_rest(m)
     base = d.xpos[m.body("base").id]
-    assert base[:2] == pytest.approx([0.175, 0.0], abs=1e-6)
+    assert base[:2] == pytest.approx([0.175, BASE_Y], abs=1e-6)
     # zero pose: gripper tip points toward the board (+y) from the pan axis
     d0 = mujoco.MjData(m)
     mujoco.mj_forward(m, d0)

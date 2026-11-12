@@ -34,3 +34,9 @@ Measured from `photos/top_down/IMG_20261112_205042055.jpg` (table 1.44 px/mm in 
 
 ## Still needed
 Real robot base position/orientation and plate height, board outer-edge-to-first-square on the robot side, measured board position on the table (corner distances), lighting photos (lamp on/off, window), side camera pose from calibration, wrist camera mount alignment.
+
+
+## Update 2026-11-12 (robot placement, wrist camera)
+- Robot base origin y = 31 mm so the back of the base footprint is flush with the table edge (as clamped in the real photos); the pan axis is then at y = 69.8 mm. The sim base now overlays the real base in `cameras/side/20261112_211321`.
+- The arm is drawn in teal (`robot_base.rgba`), like the printed real parts; the wrist camera module and its mount are modelled.
+- Rest pose: folded like the real one, wrist raised so the gripper hovers >= 70 mm above the table (above the tallest piece), because with the base moved the old rest pose rested on the board.

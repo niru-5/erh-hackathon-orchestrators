@@ -15,15 +15,16 @@ table:
   friction: [0.8, 0.005, 0.0001]   # [A] laminate vs plastic/wood piece
 
 robot_base:
-  origin_xy_mm: [175, 0]   # [A] x aligned with board centre (board x 85..265) - UNCONFIRMED; y=0 per layout "base center at y = 0"
+  origin_xy_mm: [175, 31]  # [D] x aligned with the board centre (board x 85..265). y = 31 so the BACK of the base footprint (base meshes reach 31 mm behind the base origin) is flush with the table edge y=0, as clamped in the real photos (user, 2026-11-12); pan axis ends up at y = 69.8 mm
   origin_z_mm: 2.4         # [A] upstream base mesh is offset -2.4 mm below the base origin, so the origin sits 2.4 mm up; real clamp/plate height unknown
+  rgba: [0.13, 0.72, 0.80, 1]   # [D] printed parts are teal in the real photos
   yaw_deg: 90              # [D] so101 arm extends along base +x at zero pose; +90 deg yaw makes it extend along world +y
   # Rest pose (rad) the arm holds at start, ctrl = qpos. Folded arm, gripper above the robot side of the table.
   rest_qpos:
     shoulder_pan: 0.0
-    shoulder_lift: -1.60
-    elbow_flex: 1.50
-    wrist_flex: 0.90
+    shoulder_lift: -1.62     # folded like the real rest pose (lerobot ~ -93 deg), wrist raised so the gripper hovers >= 70 mm above the table,
+    elbow_flex: 1.62         # i.e. above the tallest piece (top at 56 mm), instead of resting on the board
+    wrist_flex: 0.30
     wrist_roll: 0.0
     gripper: 0.4
 
