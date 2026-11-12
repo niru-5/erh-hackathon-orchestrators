@@ -3,10 +3,11 @@
     simulation/.venv-sim/bin/python simulation/tools/capture_calib.py
     # then open http://127.0.0.1:7860
 
-- Detects connected cameras (Linux: /dev/video* via sysfs, shown by product name, so the
-  "HD Pro Webcam C920" and "USB2.0_CAM1" are told apart; elsewhere: probes indices 0-9).
+- Detects connected cameras with a stable identity (USB serial, else USB port; see camera_registry.py)
+  so two identical cameras are told apart. Give each a role name (wrist/side); calibration files are
+  then found by role: camera_registry.load_calibration('wrist').
 - Live preview, then "Start" saves one frame every `interval` seconds, `count` times (both configurable).
-- Images land in real_setup/cameras/<camera-name>/<session>/ and are shown in a gallery;
+- Images land in real_setup/cameras/<role-or-camera-id>/<session>/ and are shown in a gallery;
   past sessions can be reloaded and viewed.
 """
 from __future__ import annotations
@@ -21,6 +22,8 @@ from pathlib import Path
 
 import cv2
 import gradio as gr
+import camera_registry as reg
+from camera_registry import discover
 
 DEFAULT_OUT = Path(__file__).resolve().parents[1] / "real_setup" / "cameras"
 DEFAULT_INTERVAL_S = 2.0
@@ -31,27 +34,9 @@ OUT_ROOT = DEFAULT_OUT
 
 
 # --------------------------------------------------------------------------- cameras
-def list_cameras() -> dict[str, str | int]:
-    """label -> cv2 device (path or index)."""
-    cams: dict[str, str | int] = {}
-    sysfs = Path("/sys/class/video4linux")
-    if sysfs.exists():
-        for node in sorted(sysfs.glob("video*"), key=lambda p: int(re.sub(r"\D", "", p.name) or 0)):
-            try:
-                # each physical camera exposes several nodes; index 0 is the capture stream
-                if (node / "index").read_text().strip() != "0":
-                    continue
-                name = (node / "name").read_text().strip().split(":")[0]
-            except OSError:
-                continue
-            cams[f"{name} (/dev/{node.name})"] = f"/dev/{node.name}"
-        return cams
-    for i in range(10):  # macOS / Windows: no cheap name lookup, so probe
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            cams[f"Camera {i}"] = i
-        cap.release()
-    return cams
+def list_cameras() -> dict[str, dict]:
+    """label -> camera info (see camera_registry.discover)."""
+    return {c["label"]: c for c in discover()}
 
 
 class Camera:
@@ -119,17 +104,23 @@ CAM = Camera()
 
 
 # --------------------------------------------------------------------------- helpers
-def slug(label: str) -> str:
-    return re.sub(r"[^A-Za-z0-9]+", "_", label.split(" (/dev")[0]).strip("_").lower() or "camera"
+def folder(label: str) -> str:
+    """Output folder: the camera's role if assigned, else name + USB id (identical cameras never mix)."""
+    c = list_cameras().get(label)
+    if c is None:
+        return re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_").lower()
+    if c["role"]:
+        return c["role"]
+    return re.sub(r"[^A-Za-z0-9]+", "_", f"{c['name']}_{c['id']}").strip("_").lower()
 
 
 def session_dirs(label: str) -> list[str]:
-    base = OUT_ROOT / slug(label)
+    base = OUT_ROOT / folder(label)
     return sorted((p.name for p in base.glob("*") if p.is_dir()), reverse=True) if base.exists() else []
 
 
 def images_in(label: str, session: str) -> list[str]:
-    return [str(p) for p in sorted((OUT_ROOT / slug(label) / session).glob("*.png"))]
+    return [str(p) for p in sorted((OUT_ROOT / folder(label) / session).glob("*.png"))]
 
 
 def open_cam(label: str, res: str):
@@ -137,12 +128,32 @@ def open_cam(label: str, res: str):
     if label not in cams:
         raise gr.Error("Camera not found, press Refresh.")
     try:
-        CAM.open(cams[label], res)
+        CAM.open(cams[label]["device"], res)
     except RuntimeError as e:
         raise gr.Error(str(e))
 
 
 # --------------------------------------------------------------------------- callbacks
+def cam_info(label: str):
+    c = list_cameras().get(label)
+    if not c:
+        return "", ""
+    calib = reg.calibration_path(c["role"]).exists() if c["role"] else False
+    return c["role"], (f"id: {c['id']}\nusb port: {c['port']}   serial: {c['serial'] or 'none'}\n"
+                       f"calibration: {'found' if calib else 'not yet'}")
+
+
+def save_role(label: str, role: str):
+    c = list_cameras().get(label)
+    role = re.sub(r"[^A-Za-z0-9_-]+", "_", (role or "").strip())
+    if not c or not role:
+        raise gr.Error("Select a camera and type a role name (e.g. wrist, side).")
+    reg.save_role(role, c["id"], OUT_ROOT)
+    cams = list_cameras()
+    new = next(l for l, x in cams.items() if x["id"] == c["id"])
+    return gr.Dropdown(choices=list(cams), value=new), f"Saved: {role} = {c['id']}"
+
+
 def refresh_cameras():
     labels = list(list_cameras())
     return gr.Dropdown(choices=labels, value=labels[0] if labels else None)
@@ -169,7 +180,7 @@ def capture(label: str, res: str, interval: float, count: float):
         raise gr.Error("Camera opened but gave no frames.")
 
     session = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = OUT_ROOT / slug(label) / session
+    out = OUT_ROOT / folder(label) / session
     out.mkdir(parents=True, exist_ok=True)
     shots: list[str] = []
     for i in range(1, count + 1):
@@ -193,7 +204,7 @@ def snap_one(label: str, res: str):
     f = CAM.wait_frame()
     if f is None:
         raise gr.Error("No frame from camera.")
-    out = OUT_ROOT / slug(label) / "manual"
+    out = OUT_ROOT / folder(label) / "manual"
     out.mkdir(parents=True, exist_ok=True)
     n = len(list(out.glob("*.png"))) + 1
     cv2.imwrite(str(out / f"img_{n:03d}.png"), f)
@@ -207,7 +218,7 @@ def load_session(label: str, session: str):
 
 def on_camera_change(label: str):
     ses = session_dirs(label) if label else []
-    return gr.Dropdown(choices=ses, value=ses[0] if ses else None)
+    return (gr.Dropdown(choices=ses, value=ses[0] if ses else None), *cam_info(label))
 
 
 def release():
@@ -226,6 +237,9 @@ def build() -> gr.Blocks:
             with gr.Column(scale=1):
                 cam = gr.Dropdown(labels, value=first, label="Camera")
                 refresh = gr.Button("Refresh camera list", size="sm")
+                role = gr.Textbox(label="Role name for this camera (e.g. wrist, side)", value=cam_info(first)[0])
+                save = gr.Button("Save role for this camera", size="sm")
+                ident = gr.Textbox(label="Camera identity", lines=3, interactive=False, value=cam_info(first)[1])
                 res = gr.Dropdown(RESOLUTIONS, value="1280x720", label="Resolution")
                 interval = gr.Number(DEFAULT_INTERVAL_S, label="Interval between images (s)", minimum=0.2)
                 count = gr.Number(DEFAULT_COUNT, label="Number of images", precision=0, minimum=1, maximum=200)
@@ -245,7 +259,8 @@ def build() -> gr.Blocks:
         timer = gr.Timer(0.2)
         timer.tick(preview, [cam, res], live, show_progress="hidden")
         refresh.click(refresh_cameras, None, cam)
-        cam.change(on_camera_change, cam, session)
+        cam.change(on_camera_change, cam, [session, role, ident])
+        save.click(save_role, [cam, role], [cam, status])
         session.change(load_session, [cam, session], gallery)
         run = start.click(capture, [cam, res, interval, count], [status, gallery, session])
         stop.click(lambda: "Stopped", None, status, cancels=[run])
@@ -262,6 +277,7 @@ def main() -> None:
     ap.add_argument("--share", action="store_true")
     args = ap.parse_args()
     OUT_ROOT = args.out.resolve()
+    reg.CAM_ROOT = OUT_ROOT
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
     print("cameras:", list(list_cameras()) or "none found", file=sys.stderr)
     build().launch(server_name="127.0.0.1", server_port=args.port, share=args.share,
