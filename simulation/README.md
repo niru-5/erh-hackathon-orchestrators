@@ -104,3 +104,10 @@ python simulation/tools/camera_registry.py list                                 
 python simulation/tools/camera_registry.py save side focus_automatic_continuous=0 focus_absolute=20
 python simulation/tools/camera_registry.py apply side                             # re-apply after a replug
 ```
+
+Why the lock is re-applied instead of set once: the C920 USB-autosuspends after 2 s idle (`/sys/bus/usb/devices/<port>/power`),
+forgets its focus (reads back 0) and then answers `Input/output error` to every `focus_absolute` write until autofocus is flipped
+on and off again. `apply_controls` does that flip automatically. To stop the camera suspending at all (needs root):
+`echo on | sudo tee /sys/bus/usb/devices/1-5/power/control` (until replug), or a udev rule
+`ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="08e5", ATTR{power/control}="on"`
+in `/etc/udev/rules.d/99-c920-nosuspend.rules`. While a program streams from the camera it does not suspend.

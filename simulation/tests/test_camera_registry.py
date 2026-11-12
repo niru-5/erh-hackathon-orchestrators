@@ -27,9 +27,10 @@ def test_roles_and_controls_do_not_clobber_each_other(tmp_path):
 class FakeCam:
     """Mimics v4l2-ctl: focus_absolute is only writable while autofocus is off; first write can fail with EIO."""
 
-    def __init__(self, flaky=0):
-        self.state = {"focus_automatic_continuous": 1, "focus_absolute": 0}
-        self.writes, self.flaky = [], flaky
+    def __init__(self, flaky=0, stuck=False):
+        # stuck: autofocus READS off but the camera answers EIO to every focus write until autofocus is flipped on
+        self.state = {"focus_automatic_continuous": 0 if stuck else 1, "focus_absolute": 0}
+        self.writes, self.flaky, self.stuck = [], flaky, stuck
 
     def __call__(self, device, *args):
         if args[0] == "--get-ctrl":
@@ -37,6 +38,10 @@ class FakeCam:
             return subprocess.CompletedProcess(args, 0, f"{n}: {self.state[n]}\n", "") if n in self.state \
                 else subprocess.CompletedProcess(args, 1, "", "unknown control")
         name, val = args[1].split("=")
+        if name == "focus_automatic_continuous" and int(val) == 1:
+            self.stuck = False
+        if name == "focus_absolute" and self.stuck:
+            return subprocess.CompletedProcess(args, 255, "", "Input/output error")
         if name == "focus_absolute" and self.state["focus_automatic_continuous"]:
             return subprocess.CompletedProcess(args, 255, "", "Permission denied")
         if self.flaky:
@@ -67,6 +72,15 @@ def test_apply_retries_transient_io_error(monkeypatch, fast):
     monkeypatch.setattr(reg, "_v4l2", cam)
     assert reg.apply_controls("/dev/video0", {"focus_automatic_continuous": 0, "focus_absolute": 20}) == []
     assert cam.state == {"focus_automatic_continuous": 0, "focus_absolute": 20}
+
+
+def test_apply_recovers_a_stuck_camera(monkeypatch, fast):
+    """Real C920 behaviour: after a process holding it dies, autofocus reads off but focus writes fail with EIO."""
+    cam = FakeCam(stuck=True)
+    monkeypatch.setattr(reg, "_v4l2", cam)
+    assert reg.apply_controls("/dev/video0", {"focus_automatic_continuous": 0, "focus_absolute": 20}) == []
+    assert cam.state == {"focus_automatic_continuous": 0, "focus_absolute": 20}
+    assert ("focus_automatic_continuous", 1) in cam.writes  # it flipped autofocus on, then back off
 
 
 def test_apply_reports_persistent_failure(monkeypatch, fast):

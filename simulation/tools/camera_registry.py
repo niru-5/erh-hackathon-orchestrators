@@ -41,6 +41,10 @@ REGISTRY = "cameras.yaml"
 # manual value it unlocks, otherwise the driver refuses the write.
 CONTROL_ORDER = ["focus_automatic_continuous", "focus_absolute", "auto_exposure", "exposure_time_absolute",
                  "exposure_dynamic_framerate", "white_balance_automatic", "white_balance_temperature"]
+# manual value -> (mode switch, its "auto" value, its "manual" value)
+MODE_SWITCH = {"focus_absolute": ("focus_automatic_continuous", 1, 0),
+               "exposure_time_absolute": ("auto_exposure", 3, 1),
+               "white_balance_temperature": ("white_balance_automatic", 1, 0)}
 
 
 def _read(p: Path) -> str:
@@ -165,18 +169,33 @@ def apply_controls(device, controls: dict[str, int], retries: int = 3, settle: f
         return [f"controls need a /dev/videoN device, got {device!r}"]
     problems = []
     current = read_controls(device, list(controls))
+
+    def write(name, want, tries=retries) -> subprocess.CompletedProcess:
+        for attempt in range(tries):
+            r = _v4l2(device, "-c", f"{name}={want}")
+            if r.returncode == 0:
+                time.sleep(settle)
+                return r
+            time.sleep(1.0 + attempt)
+        return r
+
     for name in [n for n in CONTROL_ORDER if n in controls]:
         want = int(controls[name])
         if current.get(name) == want:
             continue
-        for attempt in range(retries):
-            r = _v4l2(device, "-c", f"{name}={want}")
-            if r.returncode == 0:
-                time.sleep(settle)
-                break
-            time.sleep(1.0 + attempt)
-        else:
-            problems.append(f"{name}={want}: {(r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else 'failed'}")
+        r = write(name, want, 1 if name in MODE_SWITCH else retries)  # a stuck camera never recovers by waiting
+        if r.returncode != 0 and name in MODE_SWITCH:
+            # Seen on the C920 after a process using it dies: the mode switch READS as manual but the camera is stuck,
+            # and every manual-value write returns EIO. Flipping the switch to auto and back clears it.
+            switch, auto_value, manual_default = MODE_SWITCH[name]
+            if _v4l2(device, "-c", f"{switch}={auto_value}").returncode == 0:
+                time.sleep(1.0)
+                _v4l2(device, "-c", f"{switch}={int(controls.get(switch, manual_default))}")
+                time.sleep(1.0)
+                r = write(name, want)
+        if r.returncode != 0:
+            msg = (r.stderr or r.stdout).strip().splitlines()
+            problems.append(f"{name}={want}: {msg[-1] if msg else 'failed'}")
     return problems
 
 
