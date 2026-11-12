@@ -1,14 +1,11 @@
-"""Gradio UI to capture checkerboard images for camera calibration (TODO step B3).
+"""Gradio UI for camera calibration (TODO steps B3/B4): capture AprilGrid images, judge them live, calibrate, compare.
 
-    simulation/.venv-sim/bin/python simulation/tools/capture_calib.py
-    # then open http://127.0.0.1:7860
+    simulation/.venv-sim/bin/python simulation/tools/capture_calib.py     # http://127.0.0.1:7860
 
-- Detects connected cameras with a stable identity (USB serial, else USB port; see camera_registry.py)
-  so two identical cameras are told apart. Give each a role name (wrist/side); calibration files are
-  then found by role: camera_registry.load_calibration('wrist').
-- Live preview, then "Start" saves one frame every `interval` seconds, `count` times (both configurable).
-- Images land in real_setup/cameras/<role-or-camera-id>/<session>/ and are shown in a gallery;
-  past sessions can be reloaded and viewed.
+Tab "Capture"   pick camera (stable id, see camera_registry.py), live preview with the detected tags and a
+                GOOD/BAD banner, timed burst (interval + count configurable), per-image verdict, delete images.
+Tab "Calibrate" analyse sessions, weed bad images, run OpenCV / Kalibr-style / mrcal on the same images,
+                compare numbers + plots, save the chosen one as real_setup/cameras/<role>/calibration.yaml.
 """
 from __future__ import annotations
 
@@ -22,6 +19,11 @@ from pathlib import Path
 
 import cv2
 import gradio as gr
+
+import aprilgrid as ag
+import calib_methods as cm
+import calib_viz as viz
+import calibrate as cal
 import camera_registry as reg
 from camera_registry import discover
 
@@ -31,6 +33,11 @@ DEFAULT_COUNT = 20
 RESOLUTIONS = ["Camera default", "640x480", "1280x720", "1920x1080"]
 
 OUT_ROOT = DEFAULT_OUT
+SPEC = ag.BoardSpec()
+
+
+def rgb(img):
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 
 # --------------------------------------------------------------------------- cameras
@@ -116,11 +123,27 @@ def folder(label: str) -> str:
 
 def session_dirs(label: str) -> list[str]:
     base = OUT_ROOT / folder(label)
-    return sorted((p.name for p in base.glob("*") if p.is_dir()), reverse=True) if base.exists() else []
+    if not base.exists():
+        return []
+    return sorted((p.name for p in base.glob("*") if p.is_dir() and not p.name.startswith("_") and p.name != "calibration"),
+                  reverse=True)
 
 
-def images_in(label: str, session: str) -> list[str]:
-    return [str(p) for p in sorted((OUT_ROOT / folder(label) / session).glob("*.png"))]
+def session_paths(label: str, session: str) -> list[Path]:
+    return cal.list_images(OUT_ROOT / folder(label) / session)
+
+
+def thresholds(min_tags, min_sharp, min_px) -> ag.QualityThresholds:
+    return ag.QualityThresholds(int(min_tags), float(min_sharp), float(min_px))
+
+
+def captioned(label: str, session: str, th: ag.QualityThresholds):
+    """[(image path, 'GOOD 14 tags' / 'BAD n tags: reason')] for the gallery."""
+    out = []
+    for p in session_paths(label, session):
+        r = cal.analyze_image(p, SPEC, th)
+        out.append((str(p), f"{r.verdict} {r.det.n} tags" + ("" if r.quality.ok else f": {r.quality.reasons[0]}")))
+    return out
 
 
 def open_cam(label: str, res: str):
@@ -133,12 +156,12 @@ def open_cam(label: str, res: str):
         raise gr.Error(str(e))
 
 
-# --------------------------------------------------------------------------- callbacks
+# --------------------------------------------------------------------------- capture callbacks
 def cam_info(label: str):
     c = list_cameras().get(label)
     if not c:
         return "", ""
-    calib = reg.calibration_path(c["role"]).exists() if c["role"] else False
+    calib = reg.calibration_path(c["role"], OUT_ROOT).exists() if c["role"] else False
     return c["role"], (f"id: {c['id']}\nusb port: {c['port']}   serial: {c['serial'] or 'none'}\n"
                        f"calibration: {'found' if calib else 'not yet'}")
 
@@ -159,22 +182,29 @@ def refresh_cameras():
     return gr.Dropdown(choices=labels, value=labels[0] if labels else None)
 
 
-def preview(label: str, res: str):
+def preview(label: str, res: str, overlay: bool, min_tags, min_sharp, min_px):
     if not label:
-        return None
+        return None, ""
     try:
         open_cam(label, res)
     except gr.Error:
-        return None
+        return None, "camera unavailable"
     f = CAM.latest()
-    return None if f is None else cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+    if f is None:
+        return None, ""
+    if not overlay:
+        return rgb(f), ""
+    det = ag.detect(f, SPEC)
+    q = ag.assess(det, SPEC, thresholds(min_tags, min_sharp, min_px))
+    return rgb(ag.annotate(f, det, q)), q.text()
 
 
-def capture(label: str, res: str, interval: float, count: float):
-    """Generator: yields (status, gallery, session dropdown) after each saved image."""
+def capture(label, res, interval, count, only_good, min_tags, min_sharp, min_px):
+    """Generator: yields (status, gallery, session dropdown) after each shot."""
     if not label:
         raise gr.Error("No camera selected.")
     interval, count = max(0.2, float(interval)), max(1, int(count))
+    th = thresholds(min_tags, min_sharp, min_px)
     open_cam(label, res)
     if CAM.wait_frame() is None:
         raise gr.Error("Camera opened but gave no frames.")
@@ -182,24 +212,42 @@ def capture(label: str, res: str, interval: float, count: float):
     session = datetime.now().strftime("%Y%m%d_%H%M%S")
     out = OUT_ROOT / folder(label) / session
     out.mkdir(parents=True, exist_ok=True)
-    shots: list[str] = []
-    for i in range(1, count + 1):
+    shots: list[tuple[str, str]] = []
+    good = bad = 0
+    max_attempts = count * 3 if only_good else count
+    attempt = 0
+    while attempt < max_attempts and (good < count if only_good else True):
+        attempt += 1
         deadline = time.time() + interval
         while (left := deadline - time.time()) > 0:  # countdown, so you can move the board
-            yield f"Image {i}/{count} in {left:0.1f}s: move the board", shots, gr.skip()
+            yield (f"Shot {attempt}/{max_attempts if only_good else count} in {left:0.1f}s: move the board "
+                   f"(good so far: {good}/{count})"), shots, gr.skip(), gr.skip()
             time.sleep(min(0.2, left))
         frame = CAM.latest()
         if frame is None:
             continue
-        path = out / f"img_{i:03d}.png"
+        det = ag.detect(frame, SPEC)
+        q = ag.assess(det, SPEC, th)
+        if q.ok:
+            good += 1
+        else:
+            bad += 1
+        if only_good and not q.ok:
+            rej = out / "_rejected"
+            rej.mkdir(exist_ok=True)
+            cv2.imwrite(str(rej / f"img_{attempt:03d}.png"), frame)
+            yield f"Rejected shot {attempt}: {q.text()}", shots, gr.skip(), gr.skip()
+            continue
+        path = out / f"img_{attempt:03d}.png"
         cv2.imwrite(str(path), frame)
-        shots.append(str(path))
-        yield f"Saved {i}/{count}", shots, gr.skip()
-    yield (f"Done: {len(shots)} images in {out}", shots,
-           gr.Dropdown(choices=session_dirs(label), value=session))
+        shots.append((str(path), f"{q.verdict} {det.n} tags" + ("" if q.ok else f": {q.reasons[0]}")))
+        yield f"Saved {path.name}: {q.text()}", shots, gr.skip(), gr.skip()
+    ses = session_dirs(label)
+    yield (f"Done: {good} good, {bad} bad in {out}", shots,
+           gr.Dropdown(choices=ses, value=session), gr.CheckboxGroup(choices=ses, value=ses))
 
 
-def snap_one(label: str, res: str):
+def snap_one(label, res, min_tags, min_sharp, min_px):
     open_cam(label, res)
     f = CAM.wait_frame()
     if f is None:
@@ -208,17 +256,44 @@ def snap_one(label: str, res: str):
     out.mkdir(parents=True, exist_ok=True)
     n = len(list(out.glob("*.png"))) + 1
     cv2.imwrite(str(out / f"img_{n:03d}.png"), f)
-    return f"Saved manual/img_{n:03d}.png", images_in(label, "manual"), gr.Dropdown(
-        choices=session_dirs(label), value="manual")
+    th = thresholds(min_tags, min_sharp, min_px)
+    q = ag.assess(ag.detect(f, SPEC), SPEC, th)
+    return (f"Saved manual/img_{n:03d}.png: {q.text()}", captioned(label, "manual", th),
+            gr.Dropdown(choices=session_dirs(label), value="manual"), gr.CheckboxGroup(choices=session_dirs(label), value=session_dirs(label)))
 
 
-def load_session(label: str, session: str):
-    return images_in(label, session) if label and session else []
+def load_session(label, session, min_tags, min_sharp, min_px):
+    if not (label and session):
+        return []
+    return captioned(label, session, thresholds(min_tags, min_sharp, min_px))
 
 
-def on_camera_change(label: str):
+def on_camera_change(label):
     ses = session_dirs(label) if label else []
-    return (gr.Dropdown(choices=ses, value=ses[0] if ses else None), *cam_info(label))
+    return (gr.Dropdown(choices=ses, value=ses[0] if ses else None), *cam_info(label),
+            gr.CheckboxGroup(choices=ses, value=ses))
+
+
+def remember_selection(label, session, evt: gr.SelectData):
+    paths = session_paths(label, session)
+    return str(paths[evt.index]) if evt.index is not None and evt.index < len(paths) else ""
+
+
+def delete_selected(label, session, selected, min_tags, min_sharp, min_px):
+    if not selected:
+        raise gr.Error("Click an image in the gallery first.")
+    p = Path(selected)
+    if OUT_ROOT not in p.resolve().parents:
+        raise gr.Error("Refusing to delete outside the capture folder.")
+    p.unlink(missing_ok=True)
+    return f"Deleted {p.parent.name}/{p.name}", captioned(label, session, thresholds(min_tags, min_sharp, min_px)), ""
+
+
+def move_bad_images(label, session, min_tags, min_sharp, min_px):
+    th = thresholds(min_tags, min_sharp, min_px)
+    reps = cal.analyze(session_paths(label, session), SPEC, th)
+    moved = cal.move_bad([r for r in reps if not r.quality.ok])
+    return f"Moved {len(moved)} BAD images to {session}/_rejected/ (recoverable)", captioned(label, session, th)
 
 
 def release():
@@ -226,59 +301,196 @@ def release():
     return "Camera released", None
 
 
+# --------------------------------------------------------------------------- calibrate callbacks
+def _paths(label, sessions):
+    return [p for s in (sessions or []) for p in session_paths(label, s)]
+
+
+def _quality_rows(reports):
+    return [[r.name, r.verdict, r.det.n, round(r.quality.sharpness), round(r.quality.tag_px),
+             "" if r.reproj is None else round(r.reproj, 2), r.reason] for r in reports]
+
+
+def _annotated(reports):
+    out = []
+    for r in reports:
+        img = cv2.imread(str(r.path))
+        out.append((rgb(ag.annotate(img, r.det, r.quality)), f"{r.verdict}: {r.name.split('/')[-1]} {r.reason}"))
+    return out
+
+
+def do_analyze(label, sessions, min_tags, min_sharp, min_px):
+    paths = _paths(label, sessions)
+    if not paths:
+        raise gr.Error("No images: capture some first or select sessions.")
+    reps = cal.analyze(paths, SPEC, thresholds(min_tags, min_sharp, min_px))
+    good = sum(r.quality.ok for r in reps)
+    return f"{len(reps)} images, {good} good, {len(reps) - good} bad", _quality_rows(reps), _annotated(reps)
+
+
+def do_calibrate(label, sessions, min_tags, min_sharp, min_px, methods, weed_on, k):
+    paths = _paths(label, sessions)
+    if not paths:
+        raise gr.Error("No images: capture some first or select sessions.")
+    if not methods:
+        raise gr.Error("Select at least one method.")
+    run = cal.run(paths, SPEC, thresholds(min_tags, min_sharp, min_px), list(methods), bool(weed_on), float(k))
+    rows = cal.comparison_rows(run)
+    cols = ["method", "images", "own RMS px", "common RMS px", "fx", "fy", "cx", "cy", "k1", "k2", "p1", "p2", "k3", "fx ±", "time s"]
+    table = [[r.get(c, r.get("status", "") if c == "images" else "") for c in cols] for r in rows]
+    ok = [m for m, r in run.results.items() if r.ok]
+    notes = [f"[{m}] {n}" for m, r in run.results.items() for n in r.notes]
+    notes += [f"[{m}] FAILED: {r.error}" for m, r in run.results.items() if not r.ok]
+    log = "\n".join(run.log + notes)
+    figs = viz.all_figures(run, ok[0] if ok else None)
+    return (run, log, table, _quality_rows(run.reports), _annotated(run.reports),
+            gr.Dropdown(choices=ok, value=ok[0] if ok else None), gr.Dropdown(choices=ok, value=ok[0] if ok else None),
+            figs["coverage"], figs["errors"], figs["parameters"], figs["distortion"],
+            figs["poses"], figs["residuals"], figs["undistorted"])
+
+
+def inspect_method(run, method):
+    if run is None or not method:
+        return None, None, None
+    return viz.poses(run, method), viz.residuals(run, method), viz.undistorted(run, method)
+
+
+def save_calibration(label, run, method):
+    if run is None or not method:
+        raise gr.Error("Compute a calibration first.")
+    out = cal.save_calibration(run, method, OUT_ROOT / folder(label))
+    return f"Saved {method} -> {out}"
+
+
 # --------------------------------------------------------------------------- UI
 def build() -> gr.Blocks:
     labels = list(list_cameras())
     first = labels[0] if labels else None
-    with gr.Blocks(title="Camera calibration capture") as demo:
-        gr.Markdown("## Camera calibration capture\nHold the checkerboard in view, press **Start**, "
-                    "and tilt/move it a little between shots (different positions, angles, distances).")
+    ses0 = session_dirs(first) if first else []
+    with gr.Blocks(title="Camera calibration") as demo:
+        gr.Markdown(f"## Camera calibration  \nTarget: AprilGrid {SPEC.cols}x{SPEC.rows} tags, tag {SPEC.tag_size * 1000:g} mm, "
+                    f"gap {SPEC.spacing * 1000:g} mm (edit `board.yaml` in the cameras folder).")
         with gr.Row():
-            with gr.Column(scale=1):
-                cam = gr.Dropdown(labels, value=first, label="Camera")
-                refresh = gr.Button("Refresh camera list", size="sm")
-                role = gr.Textbox(label="Role name for this camera (e.g. wrist, side)", value=cam_info(first)[0])
-                save = gr.Button("Save role for this camera", size="sm")
-                ident = gr.Textbox(label="Camera identity", lines=3, interactive=False, value=cam_info(first)[1])
-                res = gr.Dropdown(RESOLUTIONS, value="1280x720", label="Resolution")
-                interval = gr.Number(DEFAULT_INTERVAL_S, label="Interval between images (s)", minimum=0.2)
-                count = gr.Number(DEFAULT_COUNT, label="Number of images", precision=0, minimum=1, maximum=200)
-                with gr.Row():
-                    start = gr.Button("Start", variant="primary")
-                    stop = gr.Button("Stop", variant="stop")
-                with gr.Row():
-                    snap = gr.Button("Snap one", size="sm")
-                    rel = gr.Button("Release camera", size="sm")
-                status = gr.Textbox(label="Status", interactive=False)
-            with gr.Column(scale=2):
-                live = gr.Image(label="Live preview", height=420, interactive=False)
-        with gr.Row():
-            session = gr.Dropdown(session_dirs(first) if first else [], label="Saved sessions (view earlier captures)")
-        gallery = gr.Gallery(label="Captured images", columns=5, height=360, object_fit="contain")
+            cam = gr.Dropdown(labels, value=first, label="Camera", scale=3)
+            refresh = gr.Button("Refresh camera list", size="sm", scale=1)
+            role = gr.Textbox(label="Role (e.g. wrist, side)", value=cam_info(first)[0], scale=2)
+            save = gr.Button("Save role", size="sm", scale=1)
+        ident = gr.Textbox(label="Camera identity", lines=2, interactive=False, value=cam_info(first)[1])
+        with gr.Accordion("Image quality thresholds (used by the live check and by calibration)", open=False):
+            with gr.Row():
+                min_tags = gr.Slider(4, 40, ag.QualityThresholds.min_tags, step=1, label="min tags seen")
+                min_sharp = gr.Slider(0, 120, ag.QualityThresholds.min_sharpness, step=1, label="min sharpness")
+                min_px = gr.Slider(5, 60, ag.QualityThresholds.min_tag_px, step=1, label="min tag size (px)")
+        th = [min_tags, min_sharp, min_px]
+        status = gr.Textbox(label="Status", interactive=False)
 
-        timer = gr.Timer(0.2)
-        timer.tick(preview, [cam, res], live, show_progress="hidden")
+        with gr.Tabs():
+            # ------------------------------------------------------------- capture
+            with gr.Tab("Capture"):
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        res = gr.Dropdown(RESOLUTIONS, value="1280x720", label="Resolution")
+                        interval = gr.Number(DEFAULT_INTERVAL_S, label="Interval between images (s)", minimum=0.2)
+                        count = gr.Number(DEFAULT_COUNT, label="Number of images", precision=0, minimum=1, maximum=200)
+                        only_good = gr.Checkbox(False, label="Keep going until N GOOD images (bad ones go to _rejected/)")
+                        overlay = gr.Checkbox(True, label="Live check: draw detected tags + GOOD/BAD")
+                        with gr.Row():
+                            start = gr.Button("Start", variant="primary")
+                            stop = gr.Button("Stop", variant="stop")
+                        with gr.Row():
+                            snap = gr.Button("Snap one", size="sm")
+                            rel = gr.Button("Release camera", size="sm")
+                    with gr.Column(scale=2):
+                        live = gr.Image(label="Live preview", height=420, interactive=False)
+                        verdict = gr.Textbox(label="Live verdict", interactive=False)
+                session = gr.Dropdown(ses0, value=ses0[0] if ses0 else None, label="Saved sessions (view earlier captures)",
+                                  allow_custom_value=True)
+                gallery = gr.Gallery(label="Captured images (click one to select it)", columns=5, height=360, object_fit="contain")
+                selected = gr.State("")
+                with gr.Row():
+                    del_sel = gr.Button("Delete selected image", variant="stop", size="sm")
+                    mv_bad = gr.Button("Move all BAD images in this session to _rejected/", size="sm")
+
+            # ------------------------------------------------------------- calibrate
+            with gr.Tab("Calibrate"):
+                with gr.Row():
+                    sessions = gr.CheckboxGroup(ses0, value=ses0, label="Sessions to use")
+                with gr.Row():
+                    methods = gr.CheckboxGroup([(f"{v}  [{k}]", k) for k, v in cm.METHODS.items()], value=cal.DEFAULT_METHODS,
+                                               label="Methods (all run on the same images)")
+                with gr.Row():
+                    weed_on = gr.Checkbox(True, label="Weed reprojection outliers")
+                    k = gr.Slider(1.5, 6, 2.5, step=0.1, label="outlier threshold (x median error)")
+                with gr.Row():
+                    analyze_btn = gr.Button("Analyze images (quality only)")
+                    calib_btn = gr.Button("Compute calibration", variant="primary")
+                log = gr.Textbox(label="Log", lines=6, interactive=False)
+                run_state = gr.State(None)
+                result_df = gr.Dataframe(headers=["method", "images", "own RMS px", "common RMS px", "fx", "fy", "cx", "cy",
+                                                  "k1", "k2", "p1", "p2", "k3", "fx ±", "time s"],
+                                         label="Method comparison ('common RMS' = identical scoring for every method)",
+                                         interactive=False)
+                with gr.Row():
+                    insp = gr.Dropdown([], label="Inspect method (poses / residuals / undistorted)")
+                    pick = gr.Dropdown([], label="Save as calibration.yaml")
+                    save_cal = gr.Button("Save calibration")
+                with gr.Tabs():
+                    with gr.Tab("Coverage"):
+                        p_cov = gr.Plot()
+                    with gr.Tab("Per-image error"):
+                        p_err = gr.Plot()
+                    with gr.Tab("Parameters"):
+                        p_par = gr.Plot()
+                    with gr.Tab("Distortion"):
+                        p_dis = gr.Plot()
+                    with gr.Tab("Board poses"):
+                        p_pos = gr.Plot()
+                    with gr.Tab("Residuals"):
+                        p_res = gr.Plot()
+                    with gr.Tab("Undistorted"):
+                        p_und = gr.Plot()
+                    with gr.Tab("Image verdicts"):
+                        qual_df = gr.Dataframe(headers=["image", "verdict", "tags", "sharp", "tag px", "err px", "reason"],
+                                               interactive=False)
+                        ann = gr.Gallery(label="Annotated images", columns=4, height=420, object_fit="contain")
+
+        # wiring: camera / role
+        timer = gr.Timer(0.3)
+        timer.tick(preview, [cam, res, overlay, *th], [live, verdict], show_progress="hidden")
         refresh.click(refresh_cameras, None, cam)
-        cam.change(on_camera_change, cam, [session, role, ident])
+        cam.change(on_camera_change, cam, [session, role, ident, sessions])
         save.click(save_role, [cam, role], [cam, status])
-        session.change(load_session, [cam, session], gallery)
-        run = start.click(capture, [cam, res, interval, count], [status, gallery, session])
+        session.change(load_session, [cam, session, *th], gallery)
+        # capture
+        run = start.click(capture, [cam, res, interval, count, only_good, *th], [status, gallery, session, sessions])
         stop.click(lambda: "Stopped", None, status, cancels=[run])
-        snap.click(snap_one, [cam, res], [status, gallery, session])
+        snap.click(snap_one, [cam, res, *th], [status, gallery, session, sessions])
         rel.click(release, None, [status, live])
+        gallery.select(remember_selection, [cam, session], selected)
+        del_sel.click(delete_selected, [cam, session, selected, *th], [status, gallery, selected])
+        mv_bad.click(move_bad_images, [cam, session, *th], [status, gallery])
+        # calibrate
+        analyze_btn.click(do_analyze, [cam, sessions, *th], [log, qual_df, ann])
+        calib_btn.click(do_calibrate, [cam, sessions, *th, methods, weed_on, k],
+                        [run_state, log, result_df, qual_df, ann, insp, pick,
+                         p_cov, p_err, p_par, p_dis, p_pos, p_res, p_und])
+        insp.change(inspect_method, [run_state, insp], [p_pos, p_res, p_und])
+        save_cal.click(save_calibration, [cam, run_state, pick], status)
     return demo
 
 
 def main() -> None:
-    global OUT_ROOT
+    global OUT_ROOT, SPEC
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT, help="root folder for captured images")
     ap.add_argument("--port", type=int, default=7860)
     ap.add_argument("--share", action="store_true")
     args = ap.parse_args()
     OUT_ROOT = args.out.resolve()
-    reg.CAM_ROOT = OUT_ROOT
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
+    reg.CAM_ROOT = OUT_ROOT
+    ag.CAM_ROOT = cal.CAM_ROOT = OUT_ROOT
+    SPEC = ag.load_board(OUT_ROOT)
     print("cameras:", list(list_cameras()) or "none found", file=sys.stderr)
     build().launch(server_name="127.0.0.1", server_port=args.port, share=args.share,
                    allowed_paths=[str(OUT_ROOT)])
