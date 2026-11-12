@@ -9,6 +9,7 @@ Guides: [architecture](docs/architecture.md), [setup](docs/setup.md), [usage](do
 simulation/
   requirements.txt     # pinned-ish deps for the sim venv
   mujoco_env/          # MuJoCo scene builder, env, viewers (smoke_test.py for now)
+  tools/               # capture_calib.py: Gradio UI to grab checkerboard images (B3)
   assets/              # robot + chess meshes and MJCF (A2, B2)
   config/              # world.yaml: measured dimensions, poses, ranges
   docs/                # architecture, setup guide, usage guide
@@ -47,3 +48,27 @@ env -u PYTHONPATH PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 simulation/.venv-sim/bin/pyth
 
 Any format is fine (a `measurements/setup.md` or `.yaml` is easiest to read). Large raw photos and
 videos can be committed as-is unless they get big; tell me if you'd rather keep them out of git.
+
+## Capture camera-calibration images (B3)
+
+```bash
+simulation/.venv-sim/bin/python simulation/tools/capture_calib.py   # open http://127.0.0.1:7860
+```
+
+Pick the camera (listed by name and a stable id), give it a **role** (`wrist`, `side`) and press
+*Save role*, set the interval
+(default 2 s) and number of images (default 20), press **Start**. Images are saved to
+`real_setup/cameras/<role>/<timestamp>/img_NNN.png`, shown in the gallery, and earlier
+sessions can be reopened from the "Saved sessions" dropdown. `--out DIR` changes the root folder.
+
+**Identifying identical cameras.** A camera's id is `vid:pid:serial` when it has a unique USB serial,
+otherwise `vid:pid@usb-port` (e.g. `046d:08e5@1-5`). Neither camera here has a usable serial, so they are
+identified by USB port: **keep each camera in the same port**, or re-save its role after moving it.
+Roles live in `real_setup/cameras/cameras.yaml`; calibration is read from
+`real_setup/cameras/<role>/calibration.yaml`:
+
+```python
+from camera_registry import find_device, load_calibration   # simulation/tools
+dev = find_device("wrist")        # /dev/videoN currently holding that role (None if unplugged)
+calib = load_calibration("wrist") # dict from calibration.yaml, or None
+```
