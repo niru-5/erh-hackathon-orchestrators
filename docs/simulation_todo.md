@@ -16,12 +16,12 @@ Each step has an **output** (what lands in the repo) and a **done when** (how we
 - **Output:** `simulation/requirements.txt`, a smoke test that loads an empty scene, steps it and renders one frame.
 - **Done when:** the smoke test passes on this machine, with and without a display.
 
-### A2. Import the SO-101 URDF [me]
-- [ ] Get the SO-101 URDF + meshes from `TheRobotStudio/SO-ARM100` (check which calibration variant matches our arm). Record the commit used.
-- [ ] Convert to MJCF (`meshdir`, mesh scale, inertias), keep the visual meshes, simplify collisions, filter self-collisions.
-- [ ] Joint order `shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper`; limits match the real arm.
-- [ ] Position actuators with first-guess gains (tuned in A6).
-- [ ] Viewer script that lets us drag each joint and prints values.
+### A2. Import the SO-101 URDF [me] ✅ done (open items below)
+- [x] Get the SO-101 URDF + meshes from `TheRobotStudio/SO-ARM100` ("new calibration" variant, commit recorded in `simulation/assets/so101/README.md`).
+- [x] MJCF: upstream ships one, used unmodified (meshes, inertias). **Still open:** simplify the collision shapes (esp. the gripper jaws, whose convex hulls may fill the gap) and filter self-collisions; do this with the gripper/piece work (B2/B5).
+- [x] Joint order `shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper` (tested). Limits are the upstream ones (pan ±110°, lift ±100°, elbow ±96.8°, wrist ±95°, roll −157..163°, gripper −10..100° in sim units); **checking them against our arm happens in A5/A6**.
+- [x] Position actuators with upstream gains (kp 998, kv 2.7, force ±3.35); tuned in A6.
+- [x] `view_robot.py`: prints the joint/actuator table, renders the zero pose and each joint at its limits (headless OK), `--viewer` for the interactive window (not yet tried on your display).
 - **Output:** `simulation/assets/so101/so101.xml` + meshes, `simulation/mujoco_env/view_robot.py`.
 - **Done when:** the arm loads without warnings, each joint moves in the expected direction, rest pose looks like the real one.
 

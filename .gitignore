@@ -228,3 +228,7 @@ chess_data/
 rollout_logs/
 # Simulation
 simulation/.venv-sim/
+
+# draw.io backups
+.$*.bkp
+simulation/out/

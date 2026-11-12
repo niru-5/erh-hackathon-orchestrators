@@ -47,7 +47,7 @@ Put files under `simulation/real_setup/`, by topic:
 |---|---|
 | `photos/` | table, board, robot (top-down, front, sides, close-ups with a ruler) |
 | `lighting/` | same view under each lighting condition, with a note of the lights |
-| `measurements/` | numbers (use `measurements.template.yaml` as a starting point) |
+| `measurements/` | numbers (structured values in `setup_measured.yaml`; free notes in `measurements.yaml`) |
 | `calibration/` | follower/leader lerobot calibration JSON, reference poses, motion logs |
 | `cameras/` | checkerboard images, intrinsics/extrinsics for `wrist` and `side` |
 | `pieces/` | piece photos and measurements |

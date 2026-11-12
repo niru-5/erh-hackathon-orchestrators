@@ -14,8 +14,15 @@ weights,
 
 pawns 10 -> 13 g
 horses 4 -> 7.5 g
-horses 4 -> 7 g
+elephants 4 -> 7 g
 bishops 4 -> 7 g
 kings 2 -> 5 g
 ministes 2 -> 4 g
 
+
+calibration chart with aruco markers. 
+aruco marker size = 
+57.9 = 3*x + 2*y
+121.3 = 6*x + 5*y
+x = 16.1
+y = 4.8
