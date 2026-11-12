@@ -6,3 +6,9 @@ opencv-python
 pyyaml
 pytest
 gradio
+scipy
+matplotlib
+numpysane
+gnuplotlib
+# mrcal (camera calibration comparison): install WITHOUT its GUI-only pyfltk dependency:
+#   uv pip install --python simulation/.venv-sim/bin/python --no-deps mrcal

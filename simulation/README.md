@@ -9,7 +9,7 @@ Guides: [architecture](docs/architecture.md), [setup](docs/setup.md), [usage](do
 simulation/
   requirements.txt     # pinned-ish deps for the sim venv
   mujoco_env/          # MuJoCo scene builder, env, viewers (smoke_test.py for now)
-  tools/               # capture_calib.py: Gradio UI to grab checkerboard images (B3)
+  tools/               # camera calibration: capture UI, AprilGrid detection, OpenCV/Kalibr-style/mrcal (B3/B4)
   assets/              # robot + chess meshes and MJCF (A2, B2)
   config/              # world.yaml: measured dimensions, poses, ranges
   docs/                # architecture, setup guide, usage guide
@@ -49,17 +49,29 @@ env -u PYTHONPATH PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 simulation/.venv-sim/bin/pyth
 Any format is fine (a `measurements/setup.md` or `.yaml` is easiest to read). Large raw photos and
 videos can be committed as-is unless they get big; tell me if you'd rather keep them out of git.
 
-## Capture camera-calibration images (B3)
+## Camera calibration (B3/B4)
 
 ```bash
 simulation/.venv-sim/bin/python simulation/tools/capture_calib.py   # open http://127.0.0.1:7860
 ```
 
-Pick the camera (listed by name and a stable id), give it a **role** (`wrist`, `side`) and press
-*Save role*, set the interval
-(default 2 s) and number of images (default 20), press **Start**. Images are saved to
-`real_setup/cameras/<role>/<timestamp>/img_NNN.png`, shown in the gallery, and earlier
-sessions can be reopened from the "Saved sessions" dropdown. `--out DIR` changes the root folder.
+Target: the **AprilGrid** (Kalibr's chart: 12x9 tags of family 36h11, ~16 mm tags, ~5 mm gaps; edit
+`real_setup/cameras/board.yaml` if you re-measure). The UI has two tabs:
+
+- **Capture**: pick the camera (stable id, below), give it a role (`wrist`, `side`), set interval (default 2 s)
+  and count (default 20). The live preview draws the detected tags with a **GOOD/BAD banner** (too few tags, blurry,
+  too small), each shot gets a verdict in the status line and the gallery, and "keep going until N GOOD" retries
+  bad shots (they go to `_rejected/`). Click a gallery image to **delete** it, or move all BAD ones of a session
+  to `_rejected/`. Images: `real_setup/cameras/<role>/<timestamp>/img_NNN.png`.
+- **Calibrate**: weeds out bad images (quality gate, then reprojection-outlier rejection), runs OpenCV, a
+  Kalibr-style solver and mrcal on the *same* images, and shows a comparison table plus plots (corner coverage,
+  per-image error, parameters, distortion, board poses, residuals, undistorted image). *Save calibration* writes
+  `real_setup/cameras/<role>/calibration.yaml`.
+
+The same pipeline from a shell: `python simulation/tools/calibrate.py <role> [--move-bad] [--save opencv:5]`.
+Findings and how the methods compare: [docs/calibration_comparison.md](docs/calibration_comparison.md).
+
+mrcal is installed without its GUI-only dependency: `uv pip install --python simulation/.venv-sim/bin/python --no-deps mrcal`.
 
 **Identifying identical cameras.** A camera's id is `vid:pid:serial` when it has a unique USB serial,
 otherwise `vid:pid@usb-port` (e.g. `046d:08e5@1-5`). Neither camera here has a usable serial, so they are

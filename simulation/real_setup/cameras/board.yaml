@@ -1,0 +1,6 @@
+# AprilGrid calibration target: ids row-major (id = row*cols + col); sizes in metres, measured ~16 mm tag / ~5 mm gap
+family: 36h11
+cols: 12
+rows: 9
+tag_size: 0.016
+spacing: 0.005
