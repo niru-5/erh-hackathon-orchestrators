@@ -6,20 +6,22 @@
 side:
   calibration: real_setup/cameras/side/calibration.yaml   # relative to simulation/
   # Logitech C920, manual focus 20 (see cameras.yaml focus lock), calibrated at 1280x720.
-  position_m: [0.500, 0.400, 0.360]
+  position_m: [0.5363, 0.3211, 0.3430]
   position_source: >
-    Given by the user (x=500 y=400 z=360 mm). WARNING: the table is only 420 mm wide in x, so
-    x=500 is 80 mm beyond the right table edge. Possibly measured from another origin: confirm.
+    SOLVED 2026-11-12 with cv2.solvePnP (IPPE) on the 7x7 inner corners of the real board in
+    real_setup/cameras/side/20261112_205932/img_001.png (undistorted with the calibration; 1.58 px rms).
+    It agrees with the position the user measured (500, 400, 360 mm) to within (36, -79, -17) mm, so the x origin
+    (beyond the table's right edge) is confirmed. The solve assumes the board playing area at the layout position
+    (x 102.7..247.3, y 198.1..342.7 mm, top z 22.1 mm); if the board is really elsewhere on the table, the
+    world pose shifts with it (the camera-to-board relation is what is measured).
   orientation:
-    mode: look_at              # look_at | xyaxes_cv (explicit rotation, columns = cam x,y axes in world)
-    look_at_m: [0.175, 0.2675, 0.0221]   # board outer-box centre, top surface
-    up_world: [0.0, 0.0, 1.0]
-    roll_deg: 0.0
-    source: no real side-camera frame shows the scene (calibration frames are a hand-held checkerboard); fallback look-at.
-  provisional: true
+    mode: xyaxes_cv            # explicit rotation, columns = OpenCV camera x(right), y(down), z(forward) in the world frame
+    R_cv: [[-0.0739, 0.512537, -0.855479], [0.98662, -0.087429, -0.137609], [-0.145323, -0.854202, -0.499219]]
+    source: "solvePnP on the real board corners (see position_source); script simulation/tools/solve_side_pose.py"
+  provisional: false
   needs: >
-    One frame of the real side camera (focus lock applied, 1280x720) with the empty board in view
-    and, ideally, the robot base. Solve with cv2.solvePnP on the board playing-area corners.
+    Check the board's true position on the table (top-down photos suggested it may be 25-35 mm off the layout
+    drawing); a measured board position would fix the world pose exactly.
 
 wrist:
   calibration: real_setup/cameras/wrist/calibration.yaml

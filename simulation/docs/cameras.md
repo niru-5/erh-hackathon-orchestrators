@@ -29,8 +29,8 @@ refuses 1280x720.
 |---|---|
 | Side intrinsics (1280x720, C920 focus 20, rms 0.58 px, 35 imgs) | calibrated |
 | Wrist intrinsics (1280x720, Kalibr-style radtan4, rms 1.16 px, 40 imgs) | calibrated, weaker fit |
-| Side position (0.5, 0.4, 0.36) m | user-given; x=0.5 m is 80 mm beyond the 420 mm table edge: check the origin |
-| Side orientation | PROVISIONAL: look-at board centre, zero roll. No real side frame shows the scene (calibration frames are a hand-held checkerboard), so solvePnP was not possible |
+| Side position (0.536, 0.321, 0.343) m | SOLVED by solvePnP (see below); agrees with the user's measured (0.5, 0.4, 0.36) m to within 36/79/17 mm, which confirms the x origin beyond the table edge |
+| Side orientation | SOLVED (2026-11-12): cv2.solvePnP on the 7x7 inner board corners in `real_setup/cameras/side/20261112_205932/img_001.png`, 1.58 px rms, script `tools/solve_side_pose.py`. Assumes the board is at the layout position; an overlay of the sim render on the real frame matches the board and table edges (`out/side_overlay.png`), and the robot base is within ~40 px |
 | Wrist pose in `gripper` frame | PROVISIONAL guess: (0, -0.045, -0.03) m looking at the grasp centre, image-up = gripper +x. Needs hand-eye calibration (TODO B3). Override via `position_m`, `look_at_m`, `up_gripper`, `roll_deg` or `rotation_cv_override` |
 | Wrist mount/camera STLs | off by default: the mount STL is in mm in its own CAD frame and its placement on the gripper is unverified |
 

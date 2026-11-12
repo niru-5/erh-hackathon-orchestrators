@@ -78,12 +78,18 @@ def test_projection_matches_opencv(name):
     assert np.abs(uv_r - uv_cv).max() < 0.5, (uv_r, uv_cv)
 
 
-def test_side_camera_looks_at_board():
+def test_side_camera_pose_is_a_valid_view_of_the_board():
     pos, R = C.side_pose_cv()
-    tgt = np.array(C._cfg()["side"]["orientation"]["look_at_m"])
-    assert np.allclose(R[:, 2], (tgt - pos) / np.linalg.norm(tgt - pos))
-    assert np.allclose(R.T @ R, np.eye(3), atol=1e-9) and np.linalg.det(R) > 0
+    assert np.allclose(R.T @ R, np.eye(3), atol=1e-4) and np.linalg.det(R) > 0
     assert R[2, 1] < 0  # image 'down' points downwards in the world
+    # the board playing-area corners (solved pose: rms 1.6 px) must fall inside the 1280x720 image
+    K = C.camera_matrix("side")
+    corners = np.array([[x, y, 0.0221] for x in (0.1027, 0.2473) for y in (0.1981, 0.3427)])
+    cam = (corners - pos) @ R  # camera coordinates (x right, y down, z forward)
+    assert np.all(cam[:, 2] > 0)
+    uv = (K @ cam.T).T
+    uv = uv[:, :2] / uv[:, 2:3]
+    assert np.all((uv[:, 0] > 0) & (uv[:, 0] < 1280) & (uv[:, 1] > 0) & (uv[:, 1] < 720))
 
 
 def test_distortion_roundtrip():
