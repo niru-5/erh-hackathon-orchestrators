@@ -1,10 +1,14 @@
 # Camera calibration: methods and what the first data says
 
-Code: `simulation/tools/` (`aprilgrid.py` detection + quality, `calib_methods.py` the three solvers,
+Code: `simulation/tools/` (`board.py` board models, detection + quality, `calib_methods.py` the three solvers,
 `calibrate.py` pipeline/CLI, `calib_viz.py` plots, `capture_calib.py` the UI). Tests with ground truth:
 `simulation/tests/test_calibration_synthetic.py`.
 
 ## The target
+
+(Board types: the UI also supports a plain checkerboard and ChArUco, see the README; the numbers below are for the
+AprilGrid used in the first captures. Checkerboard and ChArUco detection and calibration are verified on rendered
+images in `tests/test_boards.py`; they have not been run on real photos yet.)
 
 Your chart is an **AprilGrid** (what Kalibr uses): 12 x 9 tags, AprilTag family 36h11, ids row-major.
 Measured: tag ~16 mm, gap ~5 mm (`real_setup/cameras/board.yaml`). Verified against the images: a distortion-free

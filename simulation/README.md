@@ -55,11 +55,14 @@ videos can be committed as-is unless they get big; tell me if you'd rather keep 
 simulation/.venv-sim/bin/python simulation/tools/capture_calib.py   # open http://127.0.0.1:7860
 ```
 
-Target: the **AprilGrid** (Kalibr's chart: 12x9 tags of family 36h11, ~16 mm tags, ~5 mm gaps; edit
-`real_setup/cameras/board.yaml` if you re-measure). The UI has two tabs:
+Board: set it in the UI ("Calibration board" panel, saved to `real_setup/cameras/board.yaml`). Three types:
+**AprilGrid** (Kalibr's tag grid; default 12x9 tags, 36h11, ~16 mm tags, ~5 mm gaps), plain **checkerboard**
+(enter the number of *squares* and the square size, e.g. 10 x 10 squares of 8 mm = 9 x 9 inner corners;
+the whole board must be visible), and **ChArUco**. The panel shows what your numbers imply (inner corners, physical
+size). The UI has two tabs:
 
 - **Capture**: pick the camera (stable id, below), give it a role (`wrist`, `side`), set interval (default 2 s)
-  and count (default 20). The live preview draws the detected tags with a **GOOD/BAD banner** (too few tags, blurry,
+  and count (default 20). The live preview draws the detected tags with a **GOOD/BAD banner** (too few tags/corners, blurry,
   too small), each shot gets a verdict in the status line and the gallery, and "keep going until N GOOD" retries
   bad shots (they go to `_rejected/`). Click a gallery image to **delete** it, or move all BAD ones of a session
   to `_rejected/`. Images: `real_setup/cameras/<role>/<timestamp>/img_NNN.png`.

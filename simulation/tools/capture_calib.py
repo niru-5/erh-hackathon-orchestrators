@@ -1,4 +1,6 @@
-"""Gradio UI for camera calibration (TODO steps B3/B4): capture AprilGrid images, judge them live, calibrate, compare.
+"""Gradio UI for camera calibration (TODO steps B3/B4): capture board images, judge them live, calibrate, compare.
+
+Board types: AprilGrid, plain checkerboard, ChArUco (set in the "Calibration board" panel, saved to board.yaml).
 
     simulation/.venv-sim/bin/python simulation/tools/capture_calib.py     # http://127.0.0.1:7860
 
@@ -20,7 +22,7 @@ from pathlib import Path
 import cv2
 import gradio as gr
 
-import aprilgrid as ag
+import board as ag
 import calib_methods as cm
 import calib_viz as viz
 import calibrate as cal
@@ -142,7 +144,7 @@ def captioned(label: str, session: str, th: ag.QualityThresholds):
     out = []
     for p in session_paths(label, session):
         r = cal.analyze_image(p, SPEC, th)
-        out.append((str(p), f"{r.verdict} {r.det.n} tags" + ("" if r.quality.ok else f": {r.quality.reasons[0]}")))
+        out.append((str(p), f"{r.verdict} {r.det.n} {SPEC.unit}" + ("" if r.quality.ok else f": {r.quality.reasons[0]}")))
     return out
 
 
@@ -154,6 +156,47 @@ def open_cam(label: str, res: str):
         CAM.open(cams[label]["device"], res)
     except RuntimeError as e:
         raise gr.Error(str(e))
+
+
+# --------------------------------------------------------------------------- board callbacks
+BOARD_LABELS = {  # (cols label, rows label, size label)
+    "aprilgrid": ("Tags across", "Tags down", "Tag size (mm)"),
+    "checkerboard": ("Squares across", "Squares down", "Square size (mm)"),
+    "charuco": ("Squares across", "Squares down", "Square size (mm)"),
+}
+
+
+def _spec_from(kind, family, cols, rows, size_mm, gap_mm, ratio) -> ag.BoardSpec:
+    try:
+        spec = ag.BoardSpec(kind=kind, family=family, cols=int(cols), rows=int(rows), tag_size=float(size_mm) / 1000,
+                            spacing=float(gap_mm or 0) / 1000, marker_ratio=float(ratio))
+    except (ValueError, TypeError) as e:
+        raise gr.Error(str(e))
+    if spec.tag_size <= 0 or spec.cols < 2 or spec.rows < 2 or (kind == "aprilgrid" and spec.spacing < 0):
+        raise gr.Error("Sizes must be positive and the board at least 2 x 2.")
+    return spec
+
+
+def board_fields(kind):
+    c, r, z = BOARD_LABELS[kind]
+    fams = list(ag.FAMILIES)
+    return (gr.Dropdown(choices=fams, visible=kind != "checkerboard"), gr.Number(visible=kind == "aprilgrid"),
+            gr.Number(visible=kind == "charuco"), gr.Number(label=c), gr.Number(label=r), gr.Number(label=z))
+
+
+def board_preview(*vals):
+    try:
+        return "Not applied yet: " + _spec_from(*vals).describe()
+    except gr.Error as e:
+        return f"Invalid board: {e}"
+
+
+def apply_board(*vals):
+    global SPEC
+    SPEC = _spec_from(*vals)
+    ag.save_board(SPEC, OUT_ROOT)
+    return f"**Active board:** {SPEC.describe()}", gr.Slider(value=ag.default_thresholds(SPEC).min_tags), \
+        f"Board saved to {ag.board_path(OUT_ROOT)}. Re-run Analyze / Compute to re-judge existing images."
 
 
 # --------------------------------------------------------------------------- capture callbacks
@@ -240,7 +283,7 @@ def capture(label, res, interval, count, only_good, min_tags, min_sharp, min_px)
             continue
         path = out / f"img_{attempt:03d}.png"
         cv2.imwrite(str(path), frame)
-        shots.append((str(path), f"{q.verdict} {det.n} tags" + ("" if q.ok else f": {q.reasons[0]}")))
+        shots.append((str(path), f"{q.verdict} {det.n} {SPEC.unit}" + ("" if q.ok else f": {q.reasons[0]}")))
         yield f"Saved {path.name}: {q.text()}", shots, gr.skip(), gr.skip()
     ses = session_dirs(label)
     yield (f"Done: {good} good, {bad} bad in {out}", shots,
@@ -368,8 +411,26 @@ def build() -> gr.Blocks:
     first = labels[0] if labels else None
     ses0 = session_dirs(first) if first else []
     with gr.Blocks(title="Camera calibration") as demo:
-        gr.Markdown(f"## Camera calibration  \nTarget: AprilGrid {SPEC.cols}x{SPEC.rows} tags, tag {SPEC.tag_size * 1000:g} mm, "
-                    f"gap {SPEC.spacing * 1000:g} mm (edit `board.yaml` in the cameras folder).")
+        gr.Markdown("## Camera calibration")
+        c_lab, r_lab, z_lab = BOARD_LABELS[SPEC.kind]
+        with gr.Accordion("Calibration board: what you hold in front of the camera", open=False):
+            with gr.Row():
+                b_kind = gr.Dropdown([(v, k) for k, v in ag.KINDS.items()], value=SPEC.kind, label="Board type", scale=2)
+                b_family = gr.Dropdown(list(ag.FAMILIES), value=SPEC.family, label="Marker family",
+                                       visible=SPEC.kind != "checkerboard", scale=1)
+            with gr.Row():
+                b_cols = gr.Number(SPEC.cols, label=c_lab, precision=0, minimum=2)
+                b_rows = gr.Number(SPEC.rows, label=r_lab, precision=0, minimum=2)
+                b_size = gr.Number(round(SPEC.tag_size * 1000, 3), label=z_lab, minimum=0.1)
+                b_gap = gr.Number(round(SPEC.spacing * 1000, 3), label="Gap between tags (mm)", minimum=0,
+                                  visible=SPEC.kind == "aprilgrid")
+                b_ratio = gr.Number(SPEC.marker_ratio, label="Marker size / square size", minimum=0.1, maximum=0.95,
+                                    visible=SPEC.kind == "charuco")
+            b_note = gr.Markdown("Checkerboard and ChArUco: enter the number of **squares** (a board with 9 x 9 inner "
+                                 "corners has 10 x 10 squares). A plain checkerboard must be fully visible in every shot.")
+            b_info = gr.Markdown(f"**Active board:** {SPEC.describe()}")
+            b_apply = gr.Button("Apply & save board", variant="primary", size="sm")
+        b_all = [b_kind, b_family, b_cols, b_rows, b_size, b_gap, b_ratio]
         with gr.Row():
             cam = gr.Dropdown(labels, value=first, label="Camera", scale=3)
             refresh = gr.Button("Refresh camera list", size="sm", scale=1)
@@ -378,8 +439,8 @@ def build() -> gr.Blocks:
         ident = gr.Textbox(label="Camera identity", lines=2, interactive=False, value=cam_info(first)[1])
         with gr.Accordion("Image quality thresholds (used by the live check and by calibration)", open=False):
             with gr.Row():
-                min_tags = gr.Slider(4, 40, ag.QualityThresholds.min_tags, step=1, label="min tags seen")
-                min_sharp = gr.Slider(0, 120, ag.QualityThresholds.min_sharpness, step=1, label="min sharpness")
+                min_tags = gr.Slider(4, 100, ag.default_thresholds(SPEC).min_tags, step=1, label="min tags / corners seen")
+                min_sharp = gr.Slider(0, 400, ag.QualityThresholds.min_sharpness, step=1, label="min sharpness")
                 min_px = gr.Slider(5, 60, ag.QualityThresholds.min_tag_px, step=1, label="min tag size (px)")
         th = [min_tags, min_sharp, min_px]
         status = gr.Textbox(label="Status", interactive=False)
@@ -450,10 +511,15 @@ def build() -> gr.Blocks:
                     with gr.Tab("Undistorted"):
                         p_und = gr.Plot()
                     with gr.Tab("Image verdicts"):
-                        qual_df = gr.Dataframe(headers=["image", "verdict", "tags", "sharp", "tag px", "err px", "reason"],
+                        qual_df = gr.Dataframe(headers=["image", "verdict", "tags/corners", "sharp", "tag/square px", "err px", "reason"],
                                                interactive=False)
                         ann = gr.Gallery(label="Annotated images", columns=4, height=420, object_fit="contain")
 
+        # wiring: board
+        b_kind.change(board_fields, b_kind, [b_family, b_gap, b_ratio, b_cols, b_rows, b_size])
+        for comp in b_all:
+            comp.change(board_preview, b_all, b_info, show_progress="hidden")
+        b_apply.click(apply_board, b_all, [b_info, min_tags, status])
         # wiring: camera / role
         timer = gr.Timer(0.3)
         timer.tick(preview, [cam, res, overlay, *th], [live, verdict], show_progress="hidden")

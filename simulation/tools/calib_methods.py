@@ -23,7 +23,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from aprilgrid import BoardSpec, Detection
+from board import BoardSpec, Detection
 
 
 @dataclass
@@ -212,10 +212,17 @@ def export_kalibr(obs: list[Obs], spec: BoardSpec, size, out: Path, cam_name: st
         src = getattr(o, "path", None)
         if src:
             cv2.imwrite(str(out / cam_name / f"{1_000_000_000 * (i + 1)}.png"), cv2.imread(str(src)))
-    (out / "april.yaml").write_text(
-        "target_type: 'aprilgrid'\n"
-        f"tagCols: {spec.cols}\ntagRows: {spec.rows}\n"
-        f"tagSize: {spec.tag_size}\ntagSpacing: {spec.spacing / spec.tag_size:.4f}\ncodeOffset: 0\n")
+    if spec.kind == "aprilgrid":
+        target = ("target_type: 'aprilgrid'\n"
+                  f"tagCols: {spec.cols}\ntagRows: {spec.rows}\n"
+                  f"tagSize: {spec.tag_size}\ntagSpacing: {spec.spacing / spec.tag_size:.4f}\ncodeOffset: 0\n")
+    elif spec.kind == "checkerboard":  # Kalibr counts inner corners
+        target = ("target_type: 'checkerboard'\n"
+                  f"targetCols: {spec.cols - 1}\ntargetRows: {spec.rows - 1}\n"
+                  f"rowSpacingMeters: {spec.tag_size}\ncolSpacingMeters: {spec.tag_size}\n")
+    else:
+        raise ValueError("Kalibr supports aprilgrid and checkerboard targets, not ChArUco")
+    (out / "april.yaml").write_text(target)
     sh = out / "run_kalibr.sh"
     sh.write_text(
         "#!/usr/bin/env bash\n"
@@ -245,11 +252,11 @@ def calibrate_mrcal(obs: list[Obs], spec: BoardSpec, size, lensmodel: str = "LEN
                     skip_warp: bool = True) -> CalibResult:
     t0 = time.time()
     model = lensmodel.replace("LENSMODEL_", "")
-    nx, ny = spec.cols - 1, spec.rows - 1
+    nx, ny = spec.grid_dims
     pitch = spec.pitch
     rows, n_pts = [], {}
     for k, o in enumerate(obs):
-        js = o.det.junctions(spec)
+        js = o.det.grid_points(spec)
         n_pts[o.name] = len(js)
         fname = f"frame{k:03d}.png"
         for j in range(ny):               # mrcal grid: x fastest. (i, j) in id space; kept consistent for all frames

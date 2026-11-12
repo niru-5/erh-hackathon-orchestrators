@@ -118,8 +118,7 @@ def poses(run, method: str | None = None):
     r = ok[method]
     fig = plt.figure(figsize=(7, 5.5))
     ax = fig.add_subplot(111, projection="3d")
-    w_m, h_m = run.spec.cols * run.spec.pitch - run.spec.spacing, run.spec.rows * run.spec.pitch - run.spec.spacing
-    quad = np.array([[0, 0, 0], [w_m, 0, 0], [w_m, h_m, 0], [0, h_m, 0], [0, 0, 0]])
+    quad = run.spec.outline()
     for k, o in enumerate(run.obs):
         pose = cm.pnp_pose(o.obj, o.pix, r.K, r.dist)
         if pose is None:

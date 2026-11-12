@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -22,9 +22,9 @@ import cv2
 import numpy as np
 import yaml
 
-import aprilgrid as ag
+import board as ag
 import calib_methods as cm
-from aprilgrid import BoardSpec, Detection, Quality, QualityThresholds
+from board import BoardSpec, Detection, Quality, QualityThresholds, default_thresholds
 
 CAM_ROOT = ag.CAM_ROOT
 IMG_EXT = (".png", ".jpg", ".jpeg")
@@ -130,7 +130,7 @@ class CalibRun:
 
 def run(paths: list[Path], spec: BoardSpec, th: QualityThresholds | None = None, methods: list[str] | None = None,
         do_weed: bool = True, k: float = 2.5) -> CalibRun:
-    th = th or QualityThresholds()
+    th = th or default_thresholds(spec)
     methods = methods or DEFAULT_METHODS
     reports = analyze(paths, spec, th)
     log = [f"{len(reports)} images, {sum(r.quality.ok for r in reports)} pass the quality checks"]
@@ -138,7 +138,7 @@ def run(paths: list[Path], spec: BoardSpec, th: QualityThresholds | None = None,
         log += weed(reports, spec, k=k)
     kept = [r for r in reports if r.good]
     size = image_size(reports)
-    log.append(f"calibrating with {len(kept)} images ({sum(r.det.n for r in kept)} tags)")
+    log.append(f"calibrating with {len(kept)} images ({sum(r.det.n for r in kept)} {spec.unit})")
     obs = to_obs(kept, spec)
     results = {m: cm.run_method(m, obs, spec, size) for m in methods}
     for r in reports:  # per-image error under the primary method, for the table
@@ -183,8 +183,7 @@ def save_calibration(run_: CalibRun, method: str, role_dir: Path) -> Path:
         "dist_coeffs": [float(x) for x in r.dist],       # OpenCV order: k1 k2 p1 p2 [k3 ...]
         "intrinsics": {k: round(v, 4) for k, v in r.intrinsics.items()},
         "rms_px": round(r.common_rms, 4), "n_images": r.n_images,
-        "board": {"family": run_.spec.family, "cols": run_.spec.cols, "rows": run_.spec.rows,
-                  "tag_size_m": run_.spec.tag_size, "spacing_m": run_.spec.spacing},
+        "board": {**asdict(run_.spec), "description": run_.spec.describe()},
         "created": datetime.now().isoformat(timespec="seconds"),
     }
     text = yaml.safe_dump(doc, sort_keys=False)
@@ -212,7 +211,7 @@ def main() -> None:
     ap.add_argument("--root", type=Path, default=CAM_ROOT)
     ap.add_argument("--sessions", nargs="*", help="session folder names (default: all)")
     ap.add_argument("--methods", nargs="*", default=DEFAULT_METHODS, help=f"any of {list(cm.METHODS)}")
-    ap.add_argument("--min-tags", type=int, default=QualityThresholds.min_tags)
+    ap.add_argument("--min-tags", type=int, help="min tags (aprilgrid) / corners seen; default depends on the board kind")
     ap.add_argument("--min-sharpness", type=float, default=QualityThresholds.min_sharpness)
     ap.add_argument("--no-weed", action="store_true", help="skip reprojection-outlier rejection")
     ap.add_argument("--move-bad", action="store_true", help="move BAD images to <session>/_rejected/")
@@ -225,8 +224,8 @@ def main() -> None:
     spec = ag.load_board(a.root)
     sessions = [role_dir / s for s in a.sessions] if a.sessions else sorted(p for p in role_dir.glob("*") if p.is_dir() and not p.name.startswith(("_", "calibration")))
     paths = [p for s in sessions for p in list_images(s)]
-    th = QualityThresholds(a.min_tags, a.min_sharpness)
-    print(f"board {spec.cols}x{spec.rows} tags, tag {spec.tag_size * 1000:.1f} mm, gap {spec.spacing * 1000:.1f} mm; {len(paths)} images")
+    th = QualityThresholds(a.min_tags or default_thresholds(spec).min_tags, a.min_sharpness)
+    print(f"board: {spec.describe()}; {len(paths)} images")
     run_ = run(paths, spec, th, a.methods, not a.no_weed)
     print("\n".join(run_.log))
     print(f"\n{'image':34} {'verdict':7} {'tags':>4} {'sharp':>6} {'px err':>7}  reason")

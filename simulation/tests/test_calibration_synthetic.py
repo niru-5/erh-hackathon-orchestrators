@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-import aprilgrid as ag  # noqa: E402
+import board as ag  # noqa: E402
 import calib_methods as cm  # noqa: E402
 
 SIZE = (1280, 720)
